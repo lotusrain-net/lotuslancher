@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-hub-logout-ready"
+description = "Enables the desktop_hub_logout_ready command without any pre-configured scope."
+commands.allow = ["desktop_hub_logout_ready"]
+
+[[permission]]
+identifier = "deny-desktop-hub-logout-ready"
+description = "Denies the desktop_hub_logout_ready command without any pre-configured scope."
+commands.deny = ["desktop_hub_logout_ready"]

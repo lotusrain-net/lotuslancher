@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-sign-challenge"
+description = "Enables the desktop_sign_challenge command without any pre-configured scope."
+commands.allow = ["desktop_sign_challenge"]
+
+[[permission]]
+identifier = "deny-desktop-sign-challenge"
+description = "Denies the desktop_sign_challenge command without any pre-configured scope."
+commands.deny = ["desktop_sign_challenge"]

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LotusProxy</title>
+  <link rel="stylesheet" href="shell.css" />
+</head>
+<body>
+  <!-- Title bar (daily screen): the whole of the main view, 36 px. -->
+  <header id="titlebar" class="titlebar" hidden>
+    <div class="drag" data-drag>
+      <span class="brand">LotusProxy</span>
+    </div>
+    <button id="gear" class="tb-btn gear" title="设置" aria-label="设置">⚙<span id="gear-dot" class="dot" hidden></span></button>
+    <button class="tb-btn" data-win="minimize" title="最小化" aria-label="最小化">&#x2013;</button>
+    <button class="tb-btn" data-win="toggle_maximize" title="最大化" aria-label="最大化">&#x25A1;</button>
+    <button class="tb-btn close" data-win="close" title="关闭到托盘" aria-label="关闭">&#x2715;</button>
+  </header>
+
+  <!-- Full-window pages. -->
+  <main id="page" class="page" hidden>
+    <div class="page-bar" data-drag>
+      <span class="brand">LotusProxy</span>
+      <span class="grow"></span>
+      <button class="tb-btn" data-win="minimize" aria-label="最小化">&#x2013;</button>
+      <button class="tb-btn close" data-win="close" aria-label="关闭">&#x2715;</button>
+    </div>
+    <section class="page-body">
+      <div class="page-card">
+        <div id="page-spinner" class="spinner" hidden></div>
+        <h1 id="page-title"></h1>
+        <p id="page-text"></p>
+        <div id="page-progress" class="progress" hidden><div id="page-bar"></div></div>
+        <div id="page-actions" class="actions"></div>
+      </div>
+    </section>
+    <aside id="page-settings" class="page-settings" hidden></aside>
+  </main>
+
+  <!-- Settings drawer (its own view on the right, 360 px). -->
+  <aside id="drawer" class="drawer" hidden></aside>
+
+  <template id="settings-tpl">
+    <div class="drawer-head">
+      <h2>设置</h2>
+      <button class="icon-btn" data-close-settings aria-label="关闭设置">&#x2715;</button>
+    </div>
+    <div class="cards">
+      <section class="card">
+        <h3>状态与诊断</h3>
+        <div class="status-row"><span class="status-dot" data-status-dot></span><span data-status-text></span></div>
+        <div class="actions" data-status-actions></div>
+        <label class="switch-row"><span>开机自动启动</span><input type="checkbox" data-pref="autostart" /></label>
+        <label class="switch-row"><span>连接服务时使用系统代理</span><input type="checkbox" data-pref="system_proxy" /></label>
+        <p class="hint" data-pref-hint hidden></p>
+      </section>
+      <section class="card">
+        <h3>日志</h3>
+        <div class="actions column">
+          <button data-act="collect_logs">导出诊断日志包</button>
+          <button data-act="logs">打开日志文件夹</button>
+          <button data-copy-summary>复制版本号与状态摘要</button>
+        </div>
+      </section>
+      <section class="card">
+        <h3>临时数据</h3>
+        <div class="actions column"><button data-cleanup>清理临时数据</button></div>
+        <p class="hint" data-cleanup-hint hidden>请先在左侧结束当前会话后再清理</p>
+      </section>
+      <section class="card">
+        <h3>关于</h3>
+        <p class="muted">版本 <span data-version></span></p>
+        <div class="actions column"><button class="danger" data-uninstall>卸载客户端…</button></div>
+      </section>
+    </div>
+    <p class="toast" data-toast hidden></p>
+  </template>
+
+  <script src="shell.js"></script>
+</body>
+</html>

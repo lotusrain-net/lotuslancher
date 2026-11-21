@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-claim-grant"
+description = "Enables the desktop_claim_grant command without any pre-configured scope."
+commands.allow = ["desktop_claim_grant"]
+
+[[permission]]
+identifier = "deny-desktop-claim-grant"
+description = "Denies the desktop_claim_grant command without any pre-configured scope."
+commands.deny = ["desktop_claim_grant"]

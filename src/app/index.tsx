@@ -6,7 +6,6 @@ import { ThemeProvider } from "@proxyshard/shardx-ui-kit";
 import "./styles/index.css";
 import "./styles/app.css";
 import { KitLabels } from "./KitLabels";
-import { initAnalytics } from "../shared/lib/analytics";
 import { loadLang, useLang } from "../shared/i18n";
 import { applyStoredMotion } from "../shared/model/motion";
 import { applyStoredInterfaceSize } from "../shared/model/interfaceSize";
@@ -28,7 +27,6 @@ const fleet = panelParams.get("fleet");
 
 // The launcher window only — a panel is a second window on the same bundle and
 // would otherwise report a second user for one person.
-if (!panelGroup && !helperProfile && !fleet) void initAnalytics();
 // The launcher only: its engine gate asks while React draws its first frame.
 if (!panelGroup && !helperProfile && !fleet) askEngineEarly();
 // The launcher only: its window opens hidden and shows once it has painted a

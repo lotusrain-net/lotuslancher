@@ -163,7 +163,6 @@ export function SettingsPage() {
               { value: "storage", label: t("settings.tabStorage") },
               // A backend without sync commands (a build before them) has no Sync tab.
               ...(syncMissing ? [] : [{ value: "sync", label: t("settings.tabSync") }]),
-              { value: "other", label: t("settings.tabOther") },
               { value: "about", label: t("settings.tabAbout") },
             ]}
           />

@@ -24,7 +24,7 @@ mod reset;
 mod team;
 mod space;
 mod ext_updates;
-mod launcher_update;
+mod shell;
 // A live end-to-end check against a real team server and engine, run by hand (macOS, Linux).
 #[cfg(all(test, unix))]
 mod live_e2e;
@@ -2224,41 +2224,6 @@ fn settings_save(mut value: settings::Settings) -> Result<(), String> {
     settings::save(&value).map_err(|e| e.to_string())
 }
 
-// ---- Automation API ----
-
-/// API connection info: base URL + permanent Bearer JWT (no raw key exposed).
-#[tauri::command]
-fn api_info() -> Result<Value, String> {
-    let s = settings::ensure_secret().map_err(|e| e.to_string())?;
-    let token = api::long_lived_token(&s.api_secret)?;
-    Ok(serde_json::json!({
-        "enabled": s.api_enabled,
-        "port": s.api_port,
-        "base_url": format!("http://127.0.0.1:{}", s.api_port),
-        "token": token,
-    }))
-}
-
-/// Rotate API secret; live-swap on running server invalidates prior tokens.
-#[tauri::command]
-fn api_regenerate_token() -> Result<Value, String> {
-    let mut s = settings::load().map_err(|e| e.to_string())?;
-    s.api_secret = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
-    settings::save(&s).map_err(|e| e.to_string())?;
-    api::set_secret(&s.api_secret);
-    let token = api::long_lived_token(&s.api_secret)?;
-    Ok(serde_json::json!({
-        "enabled": s.api_enabled,
-        "port": s.api_port,
-        "base_url": format!("http://127.0.0.1:{}", s.api_port),
-        "token": token,
-    }))
-}
-
 // ---- ProxyShard billing API ----
 
 /// Saved billing-API key (empty string when unset).
@@ -2728,13 +2693,8 @@ async fn ps_set_tag(id: i64, tag: String) -> Result<Value, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Bring the main window back from the tray / minimized state and focus it.
-fn show_main_window(app: &tauri::AppHandle) {
-    use tauri::Manager;
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
+fn show_main_window(_app: &tauri::AppHandle) {
+    shell::show_window();
 }
 
 /// Run as the reaper when the command line says `--reap`; its exit code then.
@@ -2751,7 +2711,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .on_menu_event(|app, e| {
             if e.id.as_ref() == "app_quit" {
                 quit(app);
@@ -2766,15 +2726,8 @@ pub fn run() {
                     notify_warning(reset::WAIT);
                     return;
                 }
-                let to_tray = settings::load().map(|s| s.minimize_to_tray).unwrap_or(true);
-                if window.label() == "main" && to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else if window.label() == "main" {
-                    // Closing it ends the app: the same question as Quit.
-                    api.prevent_close();
-                    crate::quit(tauri::Manager::app_handle(window));
-                }
+                // The shell's window hides to the tray itself (shell::setup).
+                let _ = window;
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2904,8 +2857,6 @@ pub fn run() {
             settings_load_error,
             host_screen,
             host_hardware,
-            api_info,
-            api_regenerate_token,
             ps_get_key,
             ps_set_key,
             ps_me,
@@ -2964,9 +2915,28 @@ pub fn run() {
             runtime::runtime_status,
             runtime::runtime_install,
             runtime::launcher_update_check,
-            launcher_update::launcher_update_offer,
-            launcher_update::launcher_update_download,
-            launcher_update::launcher_update_apply,
+            shell::desktop_status,
+            shell::desktop_device_context,
+            shell::desktop_sign_challenge,
+            shell::desktop_claim_grant,
+            shell::desktop_logout,
+            shell::desktop_cancel_logout,
+            shell::desktop_open_settings,
+            shell::desktop_hub_ready,
+            shell::desktop_hub_offline,
+            shell::desktop_hub_logout_ready,
+            shell::shell_snapshot,
+            shell::shell_set_drawer,
+            shell::shell_reconnect,
+            shell::shell_action,
+            shell::shell_cleanup,
+            shell::shell_preferences,
+            shell::shell_set_autostart,
+            shell::shell_set_system_proxy,
+            shell::shell_summary,
+            shell::shell_window,
+            shell::shell_install_engine,
+            shell::shell_quit,
             reset::app_reset_plan,
             reset::app_reset,
             reset::app_reset_backup,
@@ -2985,52 +2955,8 @@ pub fn run() {
         .setup(|app| {
             let _ = APP_HANDLE.set(app.handle().clone());
 
-            {
-                use tauri::menu::{Menu, MenuItem};
-                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-                let show = MenuItem::with_id(app, "tray_show", "Show Launcher", true, None::<&str>)?;
-                let quit = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show, &quit])?;
-                if let Some(icon) = app.default_window_icon().cloned() {
-                    let builder = TrayIconBuilder::with_id("main").icon(icon);
-                    // The macOS menu bar wants a stencil: drawn from the icon's
-                    // shape alone, so it is dark on a light bar and light on a
-                    // dark one instead of staying purple in both.
-                    #[cfg(target_os = "macos")]
-                    let builder = builder.icon_as_template(true);
-                    builder
-                        .tooltip("ShardBrowser Launcher")
-                        .menu(&menu)
-                        // macOS opens the menu on any click (the tray library keeps it attached),
-                        // as menu bar extras do there; elsewhere a left click shows the window.
-                        .show_menu_on_left_click(cfg!(target_os = "macos"))
-                        .on_menu_event(|app, e| match e.id.as_ref() {
-                            "tray_show" => show_main_window(app),
-                            "tray_quit" => crate::quit(app),
-                            _ => {}
-                        })
-                        .on_tray_icon_event(|tray, e| {
-                            if let TrayIconEvent::Click {
-                                button: MouseButton::Left,
-                                button_state: MouseButtonState::Up,
-                                ..
-                            } = e
-                            {
-                                show_main_window(tray.app_handle());
-                            }
-                        })
-                        .build(app)?;
-                }
-            }
-
-            // Win/Linux: strip native caption since macOS-only titleBarStyle:Overlay leaves it.
-            #[cfg(not(target_os = "macos"))]
-            {
-                use tauri::Manager;
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.set_decorations(false);
-                }
-            }
+            shell::build_tray(app.handle())?;
+            shell::setup(app.handle())?;
 
             // An engine update the launcher died in the middle of: the previous
             // engine is put back before the window asks for it (#122).
@@ -3094,15 +3020,15 @@ pub fn run() {
                 n => eprintln!("[launcher] removed {n} cache folder(s) of deleted profiles"),
             });
 
-            // API task on the shared tokio runtime.
+            // The driver API the embedded agent drives sessions through. Always
+            // on: the agent cannot work without it, and its access control
+            // (api.rs) is what makes that safe.
             match settings::ensure_secret() {
-                Ok(s) if s.api_enabled => {
-                    let (secret, port) = (s.api_secret.clone(), s.api_port);
+                Ok(s) => {
                     tauri::async_runtime::spawn(async move {
-                        api::serve(secret, port).await;
+                        api::serve(s.api_secret).await;
                     });
                 }
-                Ok(_) => eprintln!("[launcher] automation API disabled in settings"),
                 Err(e) => eprintln!("[launcher] API secret init failed: {e}"),
             }
             Ok(())
@@ -3169,6 +3095,11 @@ fn exit_app(app: &tauri::AppHandle, code: i32) {
 fn quit(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering::SeqCst;
     use tauri::{Emitter, Manager};
+    if !reset::active() {
+        let _ = (app, &QUIT_ROUND);
+        shell::quit();
+        return;
+    }
     if reset::active() {
         notify_warning(reset::WAIT);
         return;

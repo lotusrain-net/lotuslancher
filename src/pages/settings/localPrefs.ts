@@ -1,6 +1,5 @@
 import type { Theme } from "@proxyshard/shardx-ui-kit";
 import { savedLang, useLang, type Lang } from "../../shared/i18n";
-import { analyticsEnabled, setAnalyticsEnabled } from "../../shared/lib/analytics";
 import { savedInterfaceSize, useInterfaceSize, type InterfaceSizeChoice } from "../../shared/model/interfaceSize";
 import { useDirectStart } from "../../shared/model/directStart";
 import { useKeyPrefs } from "../../shared/model/keyPrefs";
@@ -63,7 +62,8 @@ const PREFS: { [K in PrefKey]: Pref<LocalPrefs[K]> } = {
     stored: () => useKeyPrefs.getState().singleKeys,
     commit: (v) => useKeyPrefs.getState().setSingleKeys(v),
   },
-  analytics: { stored: analyticsEnabled, commit: setAnalyticsEnabled },
+  // Usage statistics are gone (LotusProxy sends none); the key stays for old drafts.
+  analytics: { stored: () => false, commit: () => {} },
   askDirect: {
     stored: () => useDirectStart.getState().ask,
     commit: (v) => useDirectStart.getState().setAsk(v),

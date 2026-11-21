@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shell-set-autostart"
+description = "Enables the shell_set_autostart command without any pre-configured scope."
+commands.allow = ["shell_set_autostart"]
+
+[[permission]]
+identifier = "deny-shell-set-autostart"
+description = "Denies the shell_set_autostart command without any pre-configured scope."
+commands.deny = ["shell_set_autostart"]

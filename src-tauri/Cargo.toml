@@ -46,7 +46,9 @@ postgres = { version = "0.19", optional = true }
 mysql = { version = "28", optional = true, default-features = false, features = ["minimal-rust", "rustls"] }
 mongodb = { version = "3", optional = true, features = ["sync"] }
 
-tauri = { version = "2", features = ["tray-icon"] }
+# "unstable": Window::add_child, the hub and local views in one window.
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
+tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -115,9 +117,6 @@ png = "0.17"
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3" }
 wasmtime = { version = "48.0.1", optional = true }
-# Without "system-proxy": it turns on hyper-util's system proxy for every reqwest client
-# here too (macOS/Windows proxy settings read on each Client::new, ~0.5 s each).
-tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "zip"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

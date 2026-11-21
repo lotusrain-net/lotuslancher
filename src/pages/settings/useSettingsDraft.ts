@@ -9,7 +9,6 @@ import { riskyLaunchArgs } from "../../shared/lib/launchArgs";
 import { confirmModal } from "../../shared/lib/confirm";
 import { toast } from "../../shared/model/toast";
 import { t, useLang } from "../../shared/i18n";
-import { analyticsEnabled } from "../../shared/lib/analytics";
 import { useDirectStart } from "../../shared/model/directStart";
 import { useInterfaceSize } from "../../shared/model/interfaceSize";
 import { useKeyPrefs } from "../../shared/model/keyPrefs";
@@ -432,7 +431,7 @@ export function useSettingsDraft() {
     size,
     reduceMotion,
     singleKeys: prefs.singleKeys ?? singleKeys,
-    analytics: prefs.analytics ?? analyticsEnabled(),
+    analytics: false,
     askDirect: prefs.askDirect ?? askDirect,
   };
   const dirty = ready && isDirty({ edits, tagOps, viewOps, prefs }, tags, views);

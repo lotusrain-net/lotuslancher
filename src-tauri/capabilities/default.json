@@ -1,35 +1,24 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for the main window and the floating panels",
-  "windows": [
+  "identifier": "local",
+  "description": "The shell's local views (title bar / full-window pages, settings drawer). The hub view is remote and gets its own runtime capability.",
+  "webviews": [
     "main",
-    "sync-panel",
-    "helper-panel"
+    "drawer"
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging",
-    "core:window:allow-minimize",
-    "core:window:allow-maximize",
-    "core:window:allow-unmaximize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-close",
-    "core:window:allow-show",
-    "core:window:allow-set-theme",
-    "opener:default",
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [
-        { "path": "$HOME/**" },
-        { "path": "$APPCONFIG/**" },
-        { "path": "/Volumes/**" },
-        { "path": "/media/**" },
-        { "path": "/mnt/**" },
-        { "path": "?:/**" },
-        { "path": "?:\\**" }
-      ]
-    },
-    "dialog:default"
+    "allow-shell-snapshot",
+    "allow-shell-set-drawer",
+    "allow-shell-reconnect",
+    "allow-shell-action",
+    "allow-shell-cleanup",
+    "allow-shell-preferences",
+    "allow-shell-set-autostart",
+    "allow-shell-set-system-proxy",
+    "allow-shell-summary",
+    "allow-shell-window",
+    "allow-shell-install-engine",
+    "allow-shell-quit"
   ]
 }

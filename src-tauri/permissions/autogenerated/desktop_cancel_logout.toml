@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-cancel-logout"
+description = "Enables the desktop_cancel_logout command without any pre-configured scope."
+commands.allow = ["desktop_cancel_logout"]
+
+[[permission]]
+identifier = "deny-desktop-cancel-logout"
+description = "Denies the desktop_cancel_logout command without any pre-configured scope."
+commands.deny = ["desktop_cancel_logout"]

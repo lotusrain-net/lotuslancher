@@ -42,7 +42,6 @@ import { useStoreChanged } from "../shared/hooks/useStoreChanged";
 import { useQuitGuard } from "../shared/hooks/useQuitGuard";
 import { useLauncherUpdatePrompt } from "../features/launcher-update";
 import { useLauncherWarning } from "../shared/hooks/useLauncherWarning";
-import { trackSection } from "../shared/lib/analytics";
 import { focusIsLost, focusPageStart, landOnPage } from "../shared/lib/focus";
 import { shellPadClass, titleBarOnMouseDown } from "../shared/lib/dragWindow";
 import { storeBus } from "../shared/lib/storeBus";
@@ -215,9 +214,6 @@ function useWarmPages() {
 }
 
 export function App() {
-  const section = useNav((s) => s.section);
-
-  useEffect(() => { void trackSection(section); }, [section]);
   useLauncherWarning();
   // The profile list loads while the engine check runs, not after it (PERF-18):
   // it reads files only. The fingerprint library is read again after a first

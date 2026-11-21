@@ -345,6 +345,270 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the desktop_cancel_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-cancel-logout",
+          "markdownDescription": "Enables the desktop_cancel_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_claim_grant command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-claim-grant",
+          "markdownDescription": "Enables the desktop_claim_grant command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_device_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-device-context",
+          "markdownDescription": "Enables the desktop_device_context command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_hub_logout_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-hub-logout-ready",
+          "markdownDescription": "Enables the desktop_hub_logout_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_hub_offline command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-hub-offline",
+          "markdownDescription": "Enables the desktop_hub_offline command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_hub_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-hub-ready",
+          "markdownDescription": "Enables the desktop_hub_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-logout",
+          "markdownDescription": "Enables the desktop_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-open-settings",
+          "markdownDescription": "Enables the desktop_open_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_sign_challenge command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-sign-challenge",
+          "markdownDescription": "Enables the desktop_sign_challenge command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-status",
+          "markdownDescription": "Enables the desktop_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-action",
+          "markdownDescription": "Enables the shell_action command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_cleanup command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-cleanup",
+          "markdownDescription": "Enables the shell_cleanup command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_install_engine command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-install-engine",
+          "markdownDescription": "Enables the shell_install_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-preferences",
+          "markdownDescription": "Enables the shell_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_quit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-quit",
+          "markdownDescription": "Enables the shell_quit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_reconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-reconnect",
+          "markdownDescription": "Enables the shell_reconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_set_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-set-autostart",
+          "markdownDescription": "Enables the shell_set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_set_drawer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-set-drawer",
+          "markdownDescription": "Enables the shell_set_drawer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_set_system_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-set-system-proxy",
+          "markdownDescription": "Enables the shell_set_system_proxy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-snapshot",
+          "markdownDescription": "Enables the shell_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_summary command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-summary",
+          "markdownDescription": "Enables the shell_summary command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-window",
+          "markdownDescription": "Enables the shell_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_cancel_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-cancel-logout",
+          "markdownDescription": "Denies the desktop_cancel_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_claim_grant command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-claim-grant",
+          "markdownDescription": "Denies the desktop_claim_grant command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_device_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-device-context",
+          "markdownDescription": "Denies the desktop_device_context command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_hub_logout_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-hub-logout-ready",
+          "markdownDescription": "Denies the desktop_hub_logout_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_hub_offline command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-hub-offline",
+          "markdownDescription": "Denies the desktop_hub_offline command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_hub_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-hub-ready",
+          "markdownDescription": "Denies the desktop_hub_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-logout",
+          "markdownDescription": "Denies the desktop_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-open-settings",
+          "markdownDescription": "Denies the desktop_open_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_sign_challenge command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-sign-challenge",
+          "markdownDescription": "Denies the desktop_sign_challenge command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-status",
+          "markdownDescription": "Denies the desktop_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-action",
+          "markdownDescription": "Denies the shell_action command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_cleanup command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-cleanup",
+          "markdownDescription": "Denies the shell_cleanup command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_install_engine command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-install-engine",
+          "markdownDescription": "Denies the shell_install_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-preferences",
+          "markdownDescription": "Denies the shell_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_quit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-quit",
+          "markdownDescription": "Denies the shell_quit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_reconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-reconnect",
+          "markdownDescription": "Denies the shell_reconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_set_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-set-autostart",
+          "markdownDescription": "Denies the shell_set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_set_drawer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-set-drawer",
+          "markdownDescription": "Denies the shell_set_drawer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_set_system_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-set-system-proxy",
+          "markdownDescription": "Denies the shell_set_system_proxy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-snapshot",
+          "markdownDescription": "Denies the shell_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_summary command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-summary",
+          "markdownDescription": "Denies the shell_summary command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-window",
+          "markdownDescription": "Denies the shell_window command without any pre-configured scope."
+        },
+        {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",
           "type": "string",
           "const": "clipboard-manager:default",
@@ -2505,6 +2769,204 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
+          "type": "string",
+          "const": "notification:default",
+          "markdownDescription": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`"
+        },
+        {
+          "description": "Enables the batch command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-batch",
+          "markdownDescription": "Enables the batch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-cancel",
+          "markdownDescription": "Enables the cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-check-permissions",
+          "markdownDescription": "Enables the check_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-create-channel",
+          "markdownDescription": "Enables the create_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-delete-channel",
+          "markdownDescription": "Enables the delete_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-get-active",
+          "markdownDescription": "Enables the get_active command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_pending command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-get-pending",
+          "markdownDescription": "Enables the get_pending command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_permission_granted command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-is-permission-granted",
+          "markdownDescription": "Enables the is_permission_granted command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-list-channels",
+          "markdownDescription": "Enables the list_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the notify command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-notify",
+          "markdownDescription": "Enables the notify command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the permission_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-permission-state",
+          "markdownDescription": "Enables the permission_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_action_types command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-register-action-types",
+          "markdownDescription": "Enables the register_action_types command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-register-listener",
+          "markdownDescription": "Enables the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-remove-active",
+          "markdownDescription": "Enables the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-request-permission",
+          "markdownDescription": "Enables the request_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the show command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-show",
+          "markdownDescription": "Enables the show command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the batch command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-batch",
+          "markdownDescription": "Denies the batch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-cancel",
+          "markdownDescription": "Denies the cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-check-permissions",
+          "markdownDescription": "Denies the check_permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-create-channel",
+          "markdownDescription": "Denies the create_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-delete-channel",
+          "markdownDescription": "Denies the delete_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-get-active",
+          "markdownDescription": "Denies the get_active command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_pending command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-get-pending",
+          "markdownDescription": "Denies the get_pending command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_permission_granted command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-is-permission-granted",
+          "markdownDescription": "Denies the is_permission_granted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-list-channels",
+          "markdownDescription": "Denies the list_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the notify command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-notify",
+          "markdownDescription": "Denies the notify command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the permission_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-permission-state",
+          "markdownDescription": "Denies the permission_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_action_types command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-register-action-types",
+          "markdownDescription": "Denies the register_action_types command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-register-listener",
+          "markdownDescription": "Denies the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-remove-active",
+          "markdownDescription": "Denies the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-request-permission",
+          "markdownDescription": "Denies the request_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the show command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-show",
+          "markdownDescription": "Denies the show command without any pre-configured scope."
+        },
+        {
           "description": "This permission set allows opening `mailto:`, `tel:`, `https://` and `http://` urls using their default application\nas well as reveal file in directories using default file explorer\n#### This default permission set includes:\n\n- `allow-open-url`\n- `allow-reveal-item-in-dir`\n- `allow-default-urls`",
           "type": "string",
           "const": "opener:default",
@@ -2551,60 +3013,6 @@
           "type": "string",
           "const": "opener:deny-reveal-item-in-dir",
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
-        },
-        {
-          "description": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`",
-          "type": "string",
-          "const": "updater:default",
-          "markdownDescription": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`"
-        },
-        {
-          "description": "Enables the check command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:allow-check",
-          "markdownDescription": "Enables the check command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the download command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:allow-download",
-          "markdownDescription": "Enables the download command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the download_and_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:allow-download-and-install",
-          "markdownDescription": "Enables the download_and_install command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the install command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:allow-install",
-          "markdownDescription": "Enables the install command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the check command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:deny-check",
-          "markdownDescription": "Denies the check command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the download command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:deny-download",
-          "markdownDescription": "Denies the download command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the download_and_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:deny-download-and-install",
-          "markdownDescription": "Denies the download_and_install command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the install command without any pre-configured scope.",
-          "type": "string",
-          "const": "updater:deny-install",
-          "markdownDescription": "Denies the install command without any pre-configured scope."
         }
       ]
     },

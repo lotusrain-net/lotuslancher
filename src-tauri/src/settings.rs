@@ -67,15 +67,16 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub ext_update_check: bool,
 
-    // ---- Local automation HTTP API (axum + JWT bearer) ----
-    /// Whether the local API server listens on 127.0.0.1:`api_port`.
+    // ---- Local driver HTTP API (axum + JWT bearer) ----
+    /// Kept so an existing settings file round-trips. LotusProxy always serves
+    /// the driver API on 127.0.0.1:40325 (`api::API_PORT`) and reads neither.
     #[serde(default = "default_api_enabled")]
     pub api_enabled: bool,
     /// Port the API binds on 127.0.0.1.
     #[serde(default = "default_api_port")]
     pub api_port: u16,
-    /// HS256 signing key for API JWTs.  Auto-generated on first run
-    /// (see `ensure_secret`); rotating it invalidates issued tokens.
+    /// HS256 signing key for API JWTs: 32 random bytes, hex. Auto-generated on
+    /// first run (see `ensure_secret`); the agent reads it from this file.
     #[serde(default)]
     pub api_secret: String,
 }
@@ -196,7 +197,7 @@ static RUN_SECRET: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn ensure_secret() -> Result<Settings> {
     let mut s = load()?;
-    if !s.api_secret.is_empty() {
+    if s.api_secret.len() >= crate::api::MIN_SECRET_LEN {
         return Ok(s);
     }
     // An unreadable file may well hold a working secret, and writing a new one
@@ -217,12 +218,14 @@ pub fn ensure_secret() -> Result<Settings> {
     Ok(s)
 }
 
+/// 32 bytes from the OS's CSPRNG, as 64 hex characters.
 fn new_secret() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
+    use ring::rand::SecureRandom;
+    let mut bytes = zeroize::Zeroizing::new([0u8; 32]);
+    ring::rand::SystemRandom::new()
+        .fill(bytes.as_mut())
+        .expect("the OS random source is unavailable");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Split into switches on whitespace; quoted runs survive.
@@ -262,9 +265,41 @@ pub fn save(s: &Settings) -> Result<()> {
         }
     }
     let body = serde_json::to_string_pretty(s)?;
-    fs::write(&path, body)?;
+    write_private(&path, body.as_bytes())?;
     if let Ok(mut g) = LOAD_ERROR.lock() {
         *g = None;
     }
     Ok(())
+}
+
+/// Write a file only this user may read: it holds the API signing secret. On
+/// Unix 0600 (set before the secret goes in); on Windows the file lives under
+/// %APPDATA%, which only the user and SYSTEM can open.
+fn write_private(path: &std::path::Path, body: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        f.write_all(body)?;
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, body)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_new_secret_is_32_random_bytes() {
+        let a = super::new_secret();
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, super::new_secret());
+        assert!(a.len() >= crate::api::MIN_SECRET_LEN);
+    }
 }

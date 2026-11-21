@@ -1486,7 +1486,7 @@ mod tests {
     }
 
     /// Files that talk HTTP or open sockets for something other than a team.
-    const OTHER_TRAFFIC: [(&str, &str); 11] = [
+    const OTHER_TRAFFIC: [(&str, &str); 12] = [
         ("process/close.rs", "Stop's Browser.close on a launched browser's own devtools"),
         ("live_e2e.rs", "the live end-to-end harness, run by hand: a test site, a proxy, CDP, the server raw"),
         ("runtime.rs", "engine and launcher downloads"),
@@ -1498,6 +1498,7 @@ mod tests {
         ("space/local/proxy.rs", "proxy checks"),
         ("space/local/extensions.rs", "extension downloads"),
         ("space/local/extensions/widevine.rs", "the Widevine CDM from Google's component updater"),
+        ("shell/agent.rs", "the embedded agent's IPC on 127.0.0.1, no proxy"),
     ];
 
     const TALKS: [&str; 6] = ["reqwest", "tungstenite", "wreq", "TcpStream::connect", "hyper", "rustls"];

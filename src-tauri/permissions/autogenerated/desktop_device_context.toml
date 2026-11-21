@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-device-context"
+description = "Enables the desktop_device_context command without any pre-configured scope."
+commands.allow = ["desktop_device_context"]
+
+[[permission]]
+identifier = "deny-desktop-device-context"
+description = "Denies the desktop_device_context command without any pre-configured scope."
+commands.deny = ["desktop_device_context"]
