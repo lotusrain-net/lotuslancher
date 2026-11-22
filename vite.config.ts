@@ -49,6 +49,8 @@ export default defineConfig(async () => {
       rollupOptions: {
         input: {
           main: here("./index.html"),
+          // The desktop shell's local views (title bar, pages, settings drawer): dist/shell/index.html.
+          shell: here("./shell/index.html"),
           // The e2e build also serves the kit test pages (e2e/kit/*.html), as the dev server does.
           ...(e2eModules ? Object.fromEntries(readdirSync(here("./e2e/kit")).filter((f) => f.endsWith(".html")).map((f) => [`e2e-kit-${f}`, here(`./e2e/kit/${f}`)])) : {}),
         },

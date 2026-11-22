@@ -63,6 +63,8 @@ pub fn update(f: impl FnOnce(&mut ShellState)) -> Result<ShellState> {
 /// What the agent reported, as far as the startup wipe cares.
 pub struct AgentAuth<'a> {
     pub authorization: &'a str,
+    pub authorization_detail: &'a str,
+    pub authorization_resolved: bool,
     pub pending_webview_clear: bool,
     pub pending_grant: bool,
     pub pending_logout: bool,
@@ -74,8 +76,21 @@ pub fn must_wipe(shell: &ShellState, agent: Option<&AgentAuth>) -> bool {
         return true;
     }
     let Some(a) = agent else { return false };
+    let confirmed_revocation = a.authorization == "reauth_required"
+        && matches!(
+            a.authorization_detail,
+            "device_revoked"
+                | "device_seat_revoked"
+                | "device_seat_suspended"
+                | "seat_revoked"
+                | "seat_suspended"
+        );
     a.pending_webview_clear
-        || (shell.bound && a.authorization == "signed_out" && !a.pending_grant && !a.pending_logout)
+        || (shell.bound
+            && a.authorization_resolved
+            && confirmed_revocation
+            && !a.pending_grant
+            && !a.pending_logout)
 }
 
 /// Delete the hub view's whole data folder: cookies, localStorage, IndexedDB,
@@ -94,7 +109,7 @@ mod tests {
     use super::*;
 
     fn agent(authorization: &str) -> AgentAuth<'_> {
-        AgentAuth { authorization, pending_webview_clear: false, pending_grant: false, pending_logout: false }
+        AgentAuth { authorization, authorization_detail: "", authorization_resolved: true, pending_webview_clear: false, pending_grant: false, pending_logout: false }
     }
 
     #[test]
@@ -111,13 +126,60 @@ mod tests {
     }
 
     #[test]
-    fn a_revoked_device_behind_a_bound_view_wipes() {
-        let bound = ShellState { bound: true, ..Default::default() };
-        assert!(must_wipe(&bound, Some(&agent("signed_out"))));
+    fn confirmed_device_revocation_behind_a_bound_view_wipes() {
+        let bound = ShellState {
+            bound: true,
+            ..Default::default()
+        };
+        let revoked = AgentAuth {
+            authorization_detail: "device_seat_revoked",
+            ..agent("reauth_required")
+        };
+        assert!(must_wipe(&bound, Some(&revoked)));
         // Not while a grant is being claimed or a logout is still running.
-        assert!(!must_wipe(&bound, Some(&AgentAuth { pending_grant: true, ..agent("signed_out") })));
-        assert!(!must_wipe(&bound, Some(&AgentAuth { pending_logout: true, ..agent("signed_out") })));
+        assert!(!must_wipe(
+            &bound,
+            Some(&AgentAuth {
+                pending_grant: true,
+                ..revoked
+            })
+        ));
+        assert!(!must_wipe(
+            &bound,
+            Some(&AgentAuth {
+                pending_logout: true,
+                ..revoked
+            })
+        ));
         assert!(!must_wipe(&bound, Some(&agent("authorized"))));
+    }
+
+    #[test]
+    fn missing_or_invalid_client_credentials_do_not_clear_iam_cookies() {
+        let bound = ShellState {
+            bound: true,
+            ..Default::default()
+        };
+        assert!(!must_wipe(&bound, Some(&agent("signed_out"))));
+        let invalid = AgentAuth {
+            authorization_detail: "invalid_grant",
+            ..agent("reauth_required")
+        };
+        assert!(!must_wipe(&bound, Some(&invalid)));
+    }
+
+    #[test]
+    fn startup_signed_out_is_not_authoritative_until_agent_restore_finishes() {
+        let bound = ShellState {
+            bound: true,
+            ..Default::default()
+        };
+        let restoring = AgentAuth {
+            authorization_resolved: false,
+            ..agent("signed_out")
+        };
+        assert!(!must_wipe(&bound, Some(&restoring)));
+        assert!(!must_wipe(&bound, Some(&agent("signed_out"))));
     }
 
     #[test]

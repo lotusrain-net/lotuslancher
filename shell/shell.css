@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import "@proxyshard/shardx-ui-kit/tokens.css";
+
+/* Utilities used inside the kit's prebuilt components, and in this shell. */
+@source "../node_modules/@proxyshard/shardx-ui-kit/dist";
+@source "./";
+
+@font-face {
+  font-family: "Inter Variable";
+  src: url("../src/app/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@layer base {
+  html { font-size: 14px; }
+  html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    background: var(--bg-white-0);
+    color: var(--text-strong-950);
+    /* Inter for Latin and digits, the system UI font for Chinese. */
+    font-family: var(--font-sans), "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+}
+
+/* ---- motion -------------------------------------------------------------
+   One curve and three lengths, the kit's: enter 200 ms ease-out, exit
+   150 ms ease-in (exits are quicker than entrances), and a 30 ms stagger so
+   the drawer's blocks arrive in reading order. Only opacity and transform:
+   both run on the compositor, so a busy hub view never drops frames here. */
+:root {
+  --shell-enter: 200ms;
+  --shell-exit: 150ms;
+  --shell-ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* The drawer view: blocks wait off to the right until the backend opens it. */
+[data-view="drawer"] .shell-enter {
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity var(--shell-exit) var(--shell-ease-in), transform var(--shell-exit) var(--shell-ease-in);
+}
+[data-view="drawer"][data-open] .shell-enter {
+  opacity: 1;
+  transform: none;
+  transition-duration: var(--shell-enter), calc(var(--shell-enter) + 60ms);
+  transition-timing-function: var(--ease-out);
+  transition-delay: calc(var(--i, 0) * 30ms);
+}
+
+/* The settings sheet beside a full-window page: a real slide, it is one view. */
+.shell-sheet {
+  transform: translateX(100%);
+  transition: transform var(--shell-exit) var(--shell-ease-in);
+}
+.shell-sheet[data-shown] {
+  transform: none;
+  transition: transform calc(var(--shell-enter) + 60ms) var(--ease-out);
+}
+.shell-scrim {
+  opacity: 0;
+  transition: opacity var(--shell-exit) var(--shell-ease-in);
+}
+.shell-scrim[data-shown] {
+  opacity: 1;
+  transition: opacity var(--shell-enter) var(--ease-out);
+}
+
+/* A page changing (starting → first run → offline) cross-fades its card. */
+.shell-page-card { animation: shell-rise var(--shell-enter) var(--ease-out) both; }
+.shell-toast { animation: shell-rise var(--shell-enter) var(--ease-out) both; }
+@keyframes shell-rise {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Fades only: nothing slides. */
+  [data-view="drawer"] .shell-enter, .shell-sheet { transform: none; }
+  [data-view="drawer"][data-open] .shell-enter { transition-delay: 0ms; }
+  .shell-sheet { opacity: 0; transition: opacity var(--shell-exit) linear; }
+  .shell-sheet[data-shown] { opacity: 1; transition: opacity var(--shell-enter) linear; }
+  .shell-page-card, .shell-toast { animation: none; }
+}

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LotusProxy</title>
+  <script>
+    // Before the first paint: the drawer view starts with its content hidden,
+    // so a view shown by the backend never flashes the closed-state frame.
+    if (location.hash === "#drawer") document.documentElement.dataset.view = "drawer";
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./main.tsx"></script>
+</body>
+</html>

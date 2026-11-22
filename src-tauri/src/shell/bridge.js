@@ -30,6 +30,9 @@
   var last = null;
   var listeners = [];
   var logoutAcked = false;
+  var offlineTimer = null;
+  var offlineReported = false;
+  var connectivityRound = 0;
   function poll() {
     return invoke("desktop_status").then(function (s) {
       last = s;
@@ -126,9 +129,62 @@
   Object.freeze(api);
   Object.defineProperty(window, "lotusDesktop", { value: api, writable: false, configurable: false, enumerable: false });
 
-  function ready() { invoke("desktop_hub_ready").catch(function () {}); }
+  function ready() {
+    connectivityRound += 1;
+    if (offlineTimer !== null) clearTimeout(offlineTimer);
+    offlineTimer = null;
+    offlineReported = false;
+    invoke("desktop_hub_ready").catch(function () {});
+  }
+
+  function probeHub() {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 5000);
+    return fetch(ORIGIN + "/", {
+      method: "HEAD",
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    }).then(function () {
+      clearTimeout(timer);
+      return true;
+    }, function () {
+      clearTimeout(timer);
+      return false;
+    });
+  }
+
+  function confirmHubConnectivity() {
+    var round = ++connectivityRound;
+    if (offlineTimer !== null) clearTimeout(offlineTimer);
+    offlineTimer = setTimeout(function () {
+      offlineTimer = null;
+      probeHub().then(function (reachable) {
+        if (round !== connectivityRound) return;
+        if (reachable) {
+          if (offlineReported) {
+            offlineReported = false;
+            location.reload();
+          } else {
+            ready();
+          }
+          return;
+        }
+        if (!offlineReported) {
+          offlineReported = true;
+          invoke("desktop_hub_offline").catch(function () {});
+        }
+        offlineTimer = setTimeout(function () {
+          offlineTimer = null;
+          confirmHubConnectivity();
+        }, 5000);
+      });
+    }, 2000);
+  }
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true });
   else ready();
-  window.addEventListener("offline", function () { invoke("desktop_hub_offline").catch(function () {}); });
+  window.addEventListener("offline", confirmHubConnectivity);
+  window.addEventListener("online", confirmHubConnectivity);
   poll();
 })();

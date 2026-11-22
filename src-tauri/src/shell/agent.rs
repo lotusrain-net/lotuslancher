@@ -55,6 +55,9 @@ pub fn spawn() -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(control) = super::CONTROL_OVERRIDE {
+        cmd.arg("--control-url").arg(control);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

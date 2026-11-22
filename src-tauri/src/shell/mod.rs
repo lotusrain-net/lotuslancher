@@ -29,15 +29,15 @@ pub use commands::*;
 pub const TITLE_H: f64 = 36.0;
 pub const DRAWER_W: f64 = 360.0;
 /// How long a hub page may take to say it loaded before the offline screen.
-const HUB_READY_TIMEOUT: Duration = Duration::from_secs(12);
+const HUB_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const HUB_OFFLINE_GRACE: Duration = Duration::from_secs(4);
+const AGENT_STATUS_MISSES_BEFORE_OFFLINE: u32 = 6;
 /// Past the agent's own 3 min quit budget, the shell goes regardless.
 const QUIT_HARD_CAP: Duration = Duration::from_secs(195);
 /// How long the hub gets to end its IAM session before the wipe goes ahead.
 const LOGOUT_ACK_WAIT: Duration = Duration::from_secs(5);
-const DEFAULT_CONTROL: &str = match option_env!("LOTUS_CONTROL_URL") {
-    Some(u) => u,
-    None => "https://hub.lotusrain.net",
-};
+const CONTROL_OVERRIDE: Option<&str> = option_env!("LOTUS_CONTROL_URL");
+const DEFAULT_CONTROL: &str = "https://hub.lotusrain.net";
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +61,8 @@ struct Shell {
     hub_ready: bool,
     /// Bumped on every hub navigation, so a late timer of an earlier one is ignored.
     hub_round: u64,
+    /// Bumped on every offline/online/load transition to cancel stale timers.
+    hub_offline_round: u64,
     status: Value,
     logout_requested: Option<Instant>,
     logout_seen: bool,
@@ -73,6 +75,7 @@ static SHELL: Mutex<Shell> = Mutex::new(Shell {
     control: None,
     hub_ready: false,
     hub_round: 0,
+    hub_offline_round: 0,
     status: Value::Null,
     logout_requested: None,
     logout_seen: false,
@@ -99,15 +102,34 @@ pub fn is_control(url: &url::Url) -> bool {
 
 /// Accept the agent's control URL: https, or http on loopback for development.
 fn parse_control(raw: &str) -> Option<url::Url> {
+    parse_control_with_local_http(raw, cfg!(debug_assertions))
+}
+
+/// A compile-time debugging override may use an HTTP loopback dev server, even
+/// in release builds. It cannot redirect the shell to a non-local HTTP host.
+fn parse_control_override(raw: &str) -> Option<url::Url> {
+    parse_control_with_local_http(raw, true)
+}
+
+fn parse_control_with_local_http(raw: &str, allow_local_http: bool) -> Option<url::Url> {
     let u = url::Url::parse(raw).ok()?;
     let host = u.host_str()?;
     let loopback = host == "127.0.0.1" || host == "localhost" || host == "[::1]";
-    let ok = (u.scheme() == "https" || (u.scheme() == "http" && loopback && cfg!(debug_assertions)))
+    let ok = (u.scheme() == "https" || (u.scheme() == "http" && loopback && allow_local_http))
         && u.username().is_empty()
         && u.password().is_none()
         && u.query().is_none()
         && u.fragment().is_none();
     ok.then(|| url::Url::parse(&u.origin().ascii_serialization()).ok()).flatten()
+}
+
+/// An explicit development target wins over the agent's configured endpoint.
+/// An invalid override fails closed instead of silently opening production.
+fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Option<url::Url> {
+    if let Some(raw) = override_url {
+        return parse_control_override(raw);
+    }
+    agent_url.and_then(parse_control).or_else(|| parse_control(DEFAULT_CONTROL))
 }
 
 // ---- layout ----
@@ -208,8 +230,25 @@ pub fn set_screen(screen: Screen) {
     }
 }
 
+/// How long the drawer view's content takes to leave (shell.css
+/// `--shell-exit`, plus a frame): the view hides once it has.
+const DRAWER_EXIT: Duration = Duration::from_millis(170);
+
 pub fn set_drawer(open: bool) {
-    with(|s| s.drawer = open);
+    let was = with(|s| std::mem::replace(&mut s.drawer, open));
+    if was && !open {
+        // Tell the views first: the drawer plays its exit, the gear lets go.
+        // The layout (hide the drawer, widen the hub) follows the exit, unless
+        // the drawer was opened again in the meantime.
+        emit_local("shell://screen", snapshot_value());
+        std::thread::spawn(|| {
+            std::thread::sleep(DRAWER_EXIT);
+            if !with(|s| s.drawer) {
+                relayout();
+            }
+        });
+        return;
+    }
     relayout();
     if open {
         if let Some(v) = app().and_then(|a| a.get_webview("drawer")) {
@@ -223,9 +262,11 @@ pub fn set_drawer(open: bool) {
 /// The local views' picture: screen, drawer, the agent's status, versions.
 pub fn snapshot_value() -> Value {
     let (screen, drawer, status, control) = with(|s| (s.screen, s.drawer, s.status.clone(), s.control.clone()));
+    let maximized = app().and_then(|a| a.get_window("main")).and_then(|w| w.is_maximized().ok()).unwrap_or(false);
     serde_json::json!({
         "screen": screen,
         "drawer": drawer,
+        "maximized": maximized,
         "status": status,
         "engine_ready": engine_ready(),
         "engine_installing": INSTALLING.load(SeqCst),
@@ -245,6 +286,10 @@ pub fn hub_status() -> Value {
         "available": !s.is_null(),
         "authorization": pick("authorization"),
         "connection": pick("connection"),
+        "transport": pick("transport"),
+        "transport_error": pick("transport_error"),
+        "transport_failure_since": pick("transport_failure_since"),
+        "last_presence_at": pick("last_presence_at"),
         "driver_ready": pick("driver_ready"),
         "engine_ready": engine_ready(),
         "session_active": pick("session_active"),
@@ -345,11 +390,10 @@ async fn boot() {
         eprintln!("[lotus] agent not started: {e:#}");
     }
     let status = agent::wait_ready(Duration::from_secs(20)).await;
-    let control = status
+    let agent_control = status
         .as_ref()
-        .and_then(|s| s.get("control_url").and_then(Value::as_str))
-        .and_then(parse_control)
-        .or_else(|| parse_control(DEFAULT_CONTROL));
+        .and_then(|s| s.get("control_url").and_then(Value::as_str));
+    let control = resolve_control(CONTROL_OVERRIDE, agent_control);
     let Some(control) = control else {
         eprintln!("[lotus] no usable control URL");
         set_screen(Screen::Offline);
@@ -382,6 +426,8 @@ async fn heal_hub_storage(status: Option<&Value>) -> bool {
     let shell = state::load();
     let auth = status.map(|s| state::AgentAuth {
         authorization: status_str(s, "authorization"),
+        authorization_detail: status_str(s, "authorization_detail"),
+        authorization_resolved: status_bool(s, "authorization_resolved"),
         pending_webview_clear: status_bool(s, "pending_webview_clear"),
         pending_grant: status_bool(s, "pending_grant"),
         pending_logout: status_bool(s, "pending_logout"),
@@ -468,6 +514,7 @@ fn hub_loading() {
     let round = with(|s| {
         s.hub_ready = false;
         s.hub_round += 1;
+        s.hub_offline_round += 1;
         s.hub_round
     });
     tauri::async_runtime::spawn(async move {
@@ -482,7 +529,10 @@ fn hub_loading() {
 
 /// The bridge on a control-origin page said it loaded.
 pub fn hub_ready() {
-    with(|s| s.hub_ready = true);
+    with(|s| {
+        s.hub_ready = true;
+        s.hub_offline_round += 1;
+    });
     let screen = with(|s| s.screen);
     if matches!(screen, Screen::Starting | Screen::Offline) {
         set_screen(if engine_ready() { Screen::Daily } else { Screen::Init });
@@ -490,7 +540,23 @@ pub fn hub_ready() {
 }
 
 pub fn hub_offline() {
-    set_screen(Screen::Offline);
+    let round = with(|s| {
+        s.hub_ready = false;
+        s.hub_offline_round += 1;
+        s.hub_offline_round
+    });
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(HUB_OFFLINE_GRACE).await;
+        let (current, ready) = with(|s| (s.hub_offline_round, s.hub_ready));
+        let expired = offline_timer_is_current(round, current, ready);
+        if expired {
+            set_screen(Screen::Offline);
+        }
+    });
+}
+
+fn offline_timer_is_current(round: u64, current: u64, hub_ready: bool) -> bool {
+    round == current && !hub_ready
 }
 
 /// Load the control origin again (offline page's "reconnect").
@@ -514,6 +580,8 @@ pub fn retry_hub() {
 
 async fn status_loop() {
     let mut misses = 0u32;
+    let mut restart_at = 3u32;
+    let mut restart_delay = 3u32;
     loop {
         if QUITTING.load(SeqCst) {
             return;
@@ -521,15 +589,20 @@ async fn status_loop() {
         match agent::status().await {
             Ok(s) => {
                 misses = 0;
+                restart_at = 3;
+                restart_delay = 3;
                 on_status(s).await;
             }
             Err(_) => {
                 misses += 1;
-                // The agent died under the shell: start it again, quietly.
-                if misses == 3 && agent::exited() {
+                // The agent died under the shell: retry bounded restarts until
+                // its status endpoint is reachable again.
+                if misses >= restart_at && agent::exited() {
                     let _ = agent::spawn();
+                    restart_at = misses.saturating_add(restart_delay);
+                    restart_delay = (restart_delay * 2).min(60);
                 }
-                if misses == 3 {
+                if misses == AGENT_STATUS_MISSES_BEFORE_OFFLINE {
                     with(|s| s.status = Value::Null);
                     emit_local("shell://status", snapshot_value());
                 }
@@ -785,10 +858,33 @@ mod tests {
     }
 
     #[test]
+    fn an_old_offline_timer_cannot_override_recovery() {
+        assert!(offline_timer_is_current(4, 4, false));
+        assert!(!offline_timer_is_current(4, 5, false));
+        assert!(!offline_timer_is_current(4, 4, true));
+    }
+
+    #[test]
     fn only_an_https_origin_is_a_control_url() {
         assert_eq!(parse_control("https://hub.lotusrain.net/x").unwrap().as_str(), "https://hub.lotusrain.net/");
         for bad in ["http://hub.lotusrain.net", "https://u:p@hub.lotusrain.net", "https://hub.lotusrain.net/?a=1", "file:///etc", "javascript:alert(1)"] {
             assert!(parse_control(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn explicit_local_control_override_wins_over_the_agent_endpoint() {
+        let control = resolve_control(Some("http://localhost:3000/path"), Some("https://hub.lotusrain.net"));
+        assert_eq!(control.unwrap().as_str(), "http://localhost:3000/");
+    }
+
+    #[test]
+    fn an_invalid_control_override_does_not_fall_back_to_production() {
+        assert!(resolve_control(Some("http://hub.lotusrain.net"), Some("https://hub.lotusrain.net")).is_none());
+    }
+
+    #[test]
+    fn absent_control_override_keeps_the_agent_endpoint() {
+        assert_eq!(resolve_control(None, Some("https://control.example.test/path")).unwrap().as_str(), "https://control.example.test/");
     }
 }
