@@ -31,7 +31,7 @@ pub const DRAWER_W: f64 = 360.0;
 /// How long a hub page may take to say it loaded before the offline screen.
 const HUB_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const HUB_OFFLINE_GRACE: Duration = Duration::from_secs(4);
-const AGENT_STATUS_MISSES_BEFORE_OFFLINE: u32 = 6;
+const AGENT_STATUS_GRACE: Duration = Duration::from_secs(15);
 /// Past the agent's own 3 min quit budget, the shell goes regardless.
 const QUIT_HARD_CAP: Duration = Duration::from_secs(195);
 /// How long the hub gets to end its IAM session before the wipe goes ahead.
@@ -54,6 +54,15 @@ pub enum Screen {
     Quitting,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AgentHealth {
+    Checking,
+    Healthy,
+    Retrying,
+    Offline,
+}
+
 struct Shell {
     screen: Screen,
     drawer: bool,
@@ -64,6 +73,8 @@ struct Shell {
     /// Bumped on every offline/online/load transition to cancel stale timers.
     hub_offline_round: u64,
     status: Value,
+    agent_health: AgentHealth,
+    agent_failure_since: Option<Instant>,
     logout_requested: Option<Instant>,
     logout_seen: bool,
     hub_logout_ack: bool,
@@ -77,6 +88,8 @@ static SHELL: Mutex<Shell> = Mutex::new(Shell {
     hub_round: 0,
     hub_offline_round: 0,
     status: Value::Null,
+    agent_health: AgentHealth::Checking,
+    agent_failure_since: None,
     logout_requested: None,
     logout_seen: false,
     hub_logout_ack: false,
@@ -97,7 +110,11 @@ fn app() -> Option<&'static AppHandle> {
 
 /// A URL is the control origin's own: same scheme, host and port.
 pub fn is_control(url: &url::Url) -> bool {
-    with(|s| s.control.as_ref().is_some_and(|c| c.origin() == url.origin()))
+    with(|s| {
+        s.control
+            .as_ref()
+            .is_some_and(|c| c.origin() == url.origin())
+    })
 }
 
 /// Accept the agent's control URL: https, or http on loopback for development.
@@ -120,7 +137,8 @@ fn parse_control_with_local_http(raw: &str, allow_local_http: bool) -> Option<ur
         && u.password().is_none()
         && u.query().is_none()
         && u.fragment().is_none();
-    ok.then(|| url::Url::parse(&u.origin().ascii_serialization()).ok()).flatten()
+    ok.then(|| url::Url::parse(&u.origin().ascii_serialization()).ok())
+        .flatten()
 }
 
 /// An explicit development target wins over the agent's configured endpoint.
@@ -129,7 +147,9 @@ fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Optio
     if let Some(raw) = override_url {
         return parse_control_override(raw);
     }
-    agent_url.and_then(parse_control).or_else(|| parse_control(DEFAULT_CONTROL))
+    agent_url
+        .and_then(parse_control)
+        .or_else(|| parse_control(DEFAULT_CONTROL))
 }
 
 // ---- layout ----
@@ -156,13 +176,37 @@ pub fn layout(screen: Screen, drawer: bool, w: f64, h: f64) -> Layout {
         Screen::Daily => {
             let drawer_w = if drawer { DRAWER_W.min(w) } else { 0.0 };
             Layout {
-                main: Rect { x: 0.0, y: 0.0, w, h: TITLE_H.min(h) },
-                drawer: drawer.then(|| Rect { x: w - drawer_w, y: TITLE_H, w: drawer_w, h: body }),
-                hub: Some(Rect { x: 0.0, y: TITLE_H, w: (w - drawer_w).max(0.0), h: body }),
+                main: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w,
+                    h: TITLE_H.min(h),
+                },
+                drawer: drawer.then(|| Rect {
+                    x: w - drawer_w,
+                    y: TITLE_H,
+                    w: drawer_w,
+                    h: body,
+                }),
+                hub: Some(Rect {
+                    x: 0.0,
+                    y: TITLE_H,
+                    w: (w - drawer_w).max(0.0),
+                    h: body,
+                }),
             }
         }
         // The full-window pages draw their own drawer when asked for one.
-        _ => Layout { main: Rect { x: 0.0, y: 0.0, w, h }, drawer: None, hub: None },
+        _ => Layout {
+            main: Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            },
+            drawer: None,
+            hub: None,
+        },
     }
 }
 
@@ -174,7 +218,9 @@ fn place(v: &Webview, r: &Rect) {
 /// Put every view where the current screen wants it and tell the local views.
 pub fn relayout() {
     let Some(app) = app() else { return };
-    let Some(win) = app.get_window("main") else { return };
+    let Some(win) = app.get_window("main") else {
+        return;
+    };
     let (screen, drawer) = with(|s| (s.screen, s.drawer));
     let scale = win.scale_factor().unwrap_or(1.0);
     let Ok(size) = win.inner_size() else { return };
@@ -261,13 +307,25 @@ pub fn set_drawer(open: bool) {
 
 /// The local views' picture: screen, drawer, the agent's status, versions.
 pub fn snapshot_value() -> Value {
-    let (screen, drawer, status, control) = with(|s| (s.screen, s.drawer, s.status.clone(), s.control.clone()));
-    let maximized = app().and_then(|a| a.get_window("main")).and_then(|w| w.is_maximized().ok()).unwrap_or(false);
+    let (screen, drawer, status, control, agent_health) = with(|s| {
+        (
+            s.screen,
+            s.drawer,
+            s.status.clone(),
+            s.control.clone(),
+            s.agent_health,
+        )
+    });
+    let maximized = app()
+        .and_then(|a| a.get_window("main"))
+        .and_then(|w| w.is_maximized().ok())
+        .unwrap_or(false);
     serde_json::json!({
         "screen": screen,
         "drawer": drawer,
         "maximized": maximized,
         "status": status,
+        "agent_health": agent_health,
         "engine_ready": engine_ready(),
         "engine_installing": INSTALLING.load(SeqCst),
         "engine_error": ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -289,12 +347,15 @@ pub fn hub_status() -> Value {
         "transport": pick("transport"),
         "transport_error": pick("transport_error"),
         "transport_failure_since": pick("transport_failure_since"),
+        "error_source": pick("error_source"),
+        "error_phase": pick("error_phase"),
         "last_presence_at": pick("last_presence_at"),
         "driver_ready": pick("driver_ready"),
         "engine_ready": engine_ready(),
         "session_active": pick("session_active"),
         "cleanup_pending": pick("cleanup_pending"),
         "cleanup_phase": pick("cleanup_phase"),
+        "cleanup_state": pick("cleanup_state"),
         "pending_logout": pick("pending_logout"),
         "logout_stage": pick("logout_stage"),
         "pending_grant": pick("pending_grant"),
@@ -323,7 +384,13 @@ pub fn install_engine() {
         match res {
             Ok(()) => {
                 // The agent probes the driver again now that it has an engine.
-                let _ = agent::call("POST", "/desktop/action", Some(&serde_json::json!({ "name": "probe" })), Duration::from_secs(100)).await;
+                let _ = agent::call(
+                    "POST",
+                    "/desktop/action",
+                    Some(&serde_json::json!({ "name": "probe" })),
+                    Duration::from_secs(100),
+                )
+                .await;
                 let ready = with(|s| s.hub_ready);
                 if ready {
                     set_screen(Screen::Daily);
@@ -334,7 +401,8 @@ pub fn install_engine() {
             }
             Err(e) => {
                 eprintln!("[lotus] engine install failed: {e}");
-                *ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = Some("engine_install_failed".into());
+                *ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some("engine_install_failed".into());
             }
         }
         emit_local("shell://status", snapshot_value());
@@ -342,7 +410,9 @@ pub fn install_engine() {
 }
 
 pub fn engine_ready() -> bool {
-    crate::runtime::binary_path().map(|p| p.exists()).unwrap_or(false)
+    crate::runtime::binary_path()
+        .map(|p| p.exists())
+        .unwrap_or(false)
 }
 
 fn status_str<'a>(s: &'a Value, k: &str) -> &'a str {
@@ -367,13 +437,29 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .build()?;
     let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
-    let main = tauri::webview::WebviewBuilder::new("main", WebviewUrl::App("shell/index.html".into())).disable_drag_drop_handler();
-    win.add_child(main, LogicalPosition::new(0.0, 0.0), LogicalSize::new(size.width, size.height))?;
-    let drawer = tauri::webview::WebviewBuilder::new("drawer", WebviewUrl::App("shell/index.html#drawer".into())).disable_drag_drop_handler();
-    let d = win.add_child(drawer, LogicalPosition::new(size.width - DRAWER_W, TITLE_H), LogicalSize::new(DRAWER_W, size.height - TITLE_H))?;
+    let main =
+        tauri::webview::WebviewBuilder::new("main", WebviewUrl::App("shell/index.html".into()))
+            .disable_drag_drop_handler();
+    win.add_child(
+        main,
+        LogicalPosition::new(0.0, 0.0),
+        LogicalSize::new(size.width, size.height),
+    )?;
+    let drawer = tauri::webview::WebviewBuilder::new(
+        "drawer",
+        WebviewUrl::App("shell/index.html#drawer".into()),
+    )
+    .disable_drag_drop_handler();
+    let d = win.add_child(
+        drawer,
+        LogicalPosition::new(size.width - DRAWER_W, TITLE_H),
+        LogicalSize::new(DRAWER_W, size.height - TITLE_H),
+    )?;
     let _ = d.hide();
     win.on_window_event(|e| match e {
-        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => relayout(),
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+            relayout()
+        }
         tauri::WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             hide_to_tray();
@@ -390,6 +476,18 @@ async fn boot() {
         eprintln!("[lotus] agent not started: {e:#}");
     }
     let status = agent::wait_ready(Duration::from_secs(20)).await;
+    with(|sh| {
+        sh.status = status.clone().unwrap_or(Value::Null);
+        sh.agent_health = if status.is_some() {
+            AgentHealth::Healthy
+        } else {
+            AgentHealth::Retrying
+        };
+        sh.agent_failure_since = status.is_none().then(Instant::now);
+    });
+    emit_local("shell://status", snapshot_value());
+    tauri::async_runtime::spawn(status_loop());
+
     let agent_control = status
         .as_ref()
         .and_then(|s| s.get("control_url").and_then(Value::as_str));
@@ -401,7 +499,6 @@ async fn boot() {
     };
     with(|s| {
         s.control = Some(control.clone());
-        s.status = status.clone().unwrap_or(Value::Null);
     });
 
     // Before any remote page: finish a logout's wipe a crash interrupted.
@@ -409,15 +506,18 @@ async fn boot() {
     if let Err(e) = add_hub_capability(&control) {
         eprintln!("[lotus] hub capability: {e}");
     }
-    let start = if wiped { control.join("/login").unwrap_or(control.clone()) } else { control.clone() };
+    let start = if wiped {
+        control.join("/login").unwrap_or(control.clone())
+    } else {
+        control.clone()
+    };
     if let Err(e) = create_hub(start) {
         eprintln!("[lotus] hub view: {e}");
         set_screen(Screen::Offline);
-    } else if !engine_ready() {
+    } else if !engine_ready() && status.is_some() {
         set_screen(Screen::Init);
         install_engine();
     }
-    tauri::async_runtime::spawn(status_loop());
 }
 
 /// Wipe the hub's data folder if the persisted state says a logout did not
@@ -440,9 +540,17 @@ async fn heal_hub_storage(status: Option<&Value>) -> bool {
         eprintln!("[lotus] hub storage wipe failed: {e:#}");
         return false;
     }
-    let agent_waiting = status.is_some_and(|s| status_bool(s, "pending_webview_clear") && status_str(s, "logout_stage") == "webview_clear");
+    let agent_waiting = status.is_some_and(|s| {
+        status_bool(s, "pending_webview_clear") && status_str(s, "logout_stage") == "webview_clear"
+    });
     if agent_waiting {
-        let _ = agent::call("POST", "/desktop/logout/webview-cleared", None, Duration::from_secs(3)).await;
+        let _ = agent::call(
+            "POST",
+            "/desktop/logout/webview-cleared",
+            None,
+            Duration::from_secs(3),
+        )
+        .await;
     }
     let _ = state::update(|s| {
         s.pending_webview_clear = false;
@@ -455,7 +563,9 @@ async fn heal_hub_storage(status: Option<&Value>) -> bool {
 /// origin only, in the hub view only.
 fn add_hub_capability(control: &url::Url) -> tauri::Result<()> {
     let Some(app) = app() else { return Ok(()) };
-    let mut cap = tauri::ipc::CapabilityBuilder::new("hub").remote(format!("{}/*", control.origin().ascii_serialization())).webview("hub");
+    let mut cap = tauri::ipc::CapabilityBuilder::new("hub")
+        .remote(format!("{}/*", control.origin().ascii_serialization()))
+        .webview("hub");
     for c in commands::HUB_COMMANDS {
         cap = cap.permission(format!("allow-{}", c.replace('_', "-")));
     }
@@ -464,11 +574,16 @@ fn add_hub_capability(control: &url::Url) -> tauri::Result<()> {
 
 fn create_hub(start: url::Url) -> tauri::Result<()> {
     let Some(app) = app() else { return Ok(()) };
-    let Some(win) = app.get_window("main") else { return Ok(()) };
+    let Some(win) = app.get_window("main") else {
+        return Ok(());
+    };
     let dir = state::hub_data_dir().map_err(|e| tauri::Error::Anyhow(e))?;
     let _ = std::fs::create_dir_all(&dir);
     let origin = start.origin().ascii_serialization();
-    let script = include_str!("bridge.js").replace("__LOTUS_CONTROL_ORIGIN__", &serde_json::to_string(&origin).unwrap_or_default());
+    let script = include_str!("bridge.js").replace(
+        "__LOTUS_CONTROL_ORIGIN__",
+        &serde_json::to_string(&origin).unwrap_or_default(),
+    );
     let hub = tauri::webview::WebviewBuilder::new("hub", WebviewUrl::External(start))
         .data_directory(dir)
         .initialization_script(script)
@@ -484,7 +599,11 @@ fn create_hub(start: url::Url) -> tauri::Result<()> {
                 hub_loading();
             }
         });
-    let hub = win.add_child(hub, LogicalPosition::new(0.0, TITLE_H), LogicalSize::new(1.0, 1.0))?;
+    let hub = win.add_child(
+        hub,
+        LogicalPosition::new(0.0, TITLE_H),
+        LogicalSize::new(1.0, 1.0),
+    )?;
     let _ = hub.hide();
     hub_loading();
     Ok(())
@@ -520,7 +639,11 @@ fn hub_loading() {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(HUB_READY_TIMEOUT).await;
         // The engine's preparation page stays up; it moves on once both are ready.
-        let late = with(|s| s.hub_round == round && !s.hub_ready && matches!(s.screen, Screen::Starting | Screen::Daily));
+        let late = with(|s| {
+            s.hub_round == round
+                && !s.hub_ready
+                && matches!(s.screen, Screen::Starting | Screen::Daily)
+        });
         if late {
             set_screen(Screen::Offline);
         }
@@ -529,13 +652,17 @@ fn hub_loading() {
 
 /// The bridge on a control-origin page said it loaded.
 pub fn hub_ready() {
-    with(|s| {
+    let (healthy, screen) = with(|s| {
         s.hub_ready = true;
         s.hub_offline_round += 1;
+        (s.agent_health == AgentHealth::Healthy, s.screen)
     });
-    let screen = with(|s| s.screen);
-    if matches!(screen, Screen::Starting | Screen::Offline) {
-        set_screen(if engine_ready() { Screen::Daily } else { Screen::Init });
+    if healthy && matches!(screen, Screen::Starting | Screen::Offline) {
+        set_screen(if engine_ready() {
+            Screen::Daily
+        } else {
+            Screen::Init
+        });
     }
 }
 
@@ -562,7 +689,9 @@ fn offline_timer_is_current(round: u64, current: u64, hub_ready: bool) -> bool {
 /// Load the control origin again (offline page's "reconnect").
 pub fn retry_hub() {
     let Some(app) = app() else { return };
-    let Some(control) = with(|s| s.control.clone()) else { return };
+    let Some(control) = with(|s| s.control.clone()) else {
+        return;
+    };
     match app.get_webview("hub") {
         Some(hub) => {
             hub_loading();
@@ -602,8 +731,14 @@ async fn status_loop() {
                     restart_at = misses.saturating_add(restart_delay);
                     restart_delay = (restart_delay * 2).min(60);
                 }
-                if misses == AGENT_STATUS_MISSES_BEFORE_OFFLINE {
-                    with(|s| s.status = Value::Null);
+                let changed = with(|sh| {
+                    let since = *sh.agent_failure_since.get_or_insert_with(Instant::now);
+                    let health = agent_health_after_failure(since.elapsed());
+                    let changed = sh.agent_health != health;
+                    sh.agent_health = health;
+                    changed
+                });
+                if changed {
                     emit_local("shell://status", snapshot_value());
                 }
             }
@@ -613,10 +748,13 @@ async fn status_loop() {
 }
 
 async fn on_status(s: Value) {
-    let changed = with(|sh| {
-        let c = sh.status != s;
+    let (changed, healthy_transition, hub_ready, screen) = with(|sh| {
+        let c = sh.status != s || sh.agent_health != AgentHealth::Healthy;
+        let was_healthy = sh.agent_health == AgentHealth::Healthy;
         sh.status = s.clone();
-        c
+        sh.agent_health = AgentHealth::Healthy;
+        sh.agent_failure_since = None;
+        (c, !was_healthy, sh.hub_ready, sh.screen)
     });
     if changed {
         emit_local("shell://status", snapshot_value());
@@ -625,7 +763,16 @@ async fn on_status(s: Value) {
     if status_str(&s, "authorization") == "authorized" && !state::load().bound {
         let _ = state::update(|st| st.bound = true);
     }
-    let waiting = status_bool(&s, "pending_webview_clear") && status_str(&s, "logout_stage") == "webview_clear";
+    if healthy_transition {
+        if !engine_ready() {
+            set_screen(Screen::Init);
+            install_engine();
+        } else if hub_ready && matches!(screen, Screen::Starting | Screen::Offline) {
+            set_screen(Screen::Daily);
+        }
+    }
+    let waiting = status_bool(&s, "pending_webview_clear")
+        && status_str(&s, "logout_stage") == "webview_clear";
     if !waiting {
         with(|sh| {
             sh.logout_seen = false;
@@ -639,7 +786,11 @@ async fn on_status(s: Value) {
             sh.logout_seen = true;
             sh.logout_requested.get_or_insert_with(Instant::now);
         }
-        (first, sh.hub_logout_ack, sh.logout_requested.unwrap_or_else(Instant::now))
+        (
+            first,
+            sh.hub_logout_ack,
+            sh.logout_requested.unwrap_or_else(Instant::now),
+        )
     });
     if first {
         // The latch, in case this logout started from the tray or the agent.
@@ -647,6 +798,14 @@ async fn on_status(s: Value) {
     }
     if ack || since.elapsed() >= LOGOUT_ACK_WAIT || !with(|sh| sh.hub_ready) {
         finish_logout_wipe().await;
+    }
+}
+
+fn agent_health_after_failure(elapsed: Duration) -> AgentHealth {
+    if elapsed >= AGENT_STATUS_GRACE {
+        AgentHealth::Offline
+    } else {
+        AgentHealth::Retrying
     }
 }
 
@@ -686,7 +845,13 @@ async fn finish_logout_wipe() {
         None => state::wipe_hub_data().is_ok(),
     };
     if ok {
-        let told = agent::call("POST", "/desktop/logout/webview-cleared", None, Duration::from_secs(3)).await;
+        let told = agent::call(
+            "POST",
+            "/desktop/logout/webview-cleared",
+            None,
+            Duration::from_secs(3),
+        )
+        .await;
         if told.is_ok() {
             let _ = state::update(|s| {
                 s.pending_webview_clear = false;
@@ -694,7 +859,10 @@ async fn finish_logout_wipe() {
             });
             logout_cancelled();
             with(|s| s.logout_requested = None);
-            if let (Some(hub), Some(control)) = (app().and_then(|a| a.get_webview("hub")), with(|s| s.control.clone())) {
+            if let (Some(hub), Some(control)) = (
+                app().and_then(|a| a.get_webview("hub")),
+                with(|s| s.control.clone()),
+            ) {
                 hub_loading();
                 let _ = hub.navigate(control.join("/login").unwrap_or(control));
             }
@@ -714,7 +882,11 @@ fn hide_to_tray() {
     }
     if !state::load().tray_hint_shown {
         let _ = state::update(|s| s.tray_hint_shown = true);
-        tray_notice(app, "LotusProxy 仍在托盘运行", "点托盘图标可重新打开；要退出请在托盘菜单选「退出」。");
+        tray_notice(
+            app,
+            "LotusProxy 仍在托盘运行",
+            "点托盘图标可重新打开；要退出请在托盘菜单选「退出」。",
+        );
     }
 }
 
@@ -754,7 +926,10 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "tray_quit", "退出", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&show, &stop, &settings, &sep, &quit])?;
-    let mut b = TrayIconBuilder::with_id(TRAY_ID).tooltip("LotusProxy").menu(&menu).show_menu_on_left_click(false);
+    let mut b = TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip("LotusProxy")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon().cloned() {
         b = b.icon(icon);
     }
@@ -770,7 +945,12 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         _ => {}
     })
     .on_tray_icon_event(|_, e| {
-        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = e
+        {
             show_window();
         }
     })
@@ -790,7 +970,12 @@ static TRAY_STOP: TrayStop = TrayStop(Mutex::new(None));
 
 fn update_tray() -> tauri::Result<()> {
     let active = with(|s| status_bool(&s.status, "session_active"));
-    if let Some(item) = TRAY_STOP.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+    if let Some(item) = TRAY_STOP
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
         item.set_enabled(active)?;
     }
     Ok(())
@@ -833,8 +1018,24 @@ mod tests {
     #[test]
     fn daily_puts_the_hub_under_the_title_bar() {
         let l = layout(Screen::Daily, false, 1280.0, 800.0);
-        assert_eq!(l.main, Rect { x: 0.0, y: 0.0, w: 1280.0, h: TITLE_H });
-        assert_eq!(l.hub, Some(Rect { x: 0.0, y: TITLE_H, w: 1280.0, h: 800.0 - TITLE_H }));
+        assert_eq!(
+            l.main,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1280.0,
+                h: TITLE_H
+            }
+        );
+        assert_eq!(
+            l.hub,
+            Some(Rect {
+                x: 0.0,
+                y: TITLE_H,
+                w: 1280.0,
+                h: 800.0 - TITLE_H
+            })
+        );
         assert_eq!(l.drawer, None);
     }
 
@@ -844,15 +1045,36 @@ mod tests {
         let hub = l.hub.unwrap();
         let drawer = l.drawer.unwrap();
         assert_eq!(hub.w, 1280.0 - DRAWER_W);
-        assert_eq!(drawer, Rect { x: 1280.0 - DRAWER_W, y: TITLE_H, w: DRAWER_W, h: 800.0 - TITLE_H });
+        assert_eq!(
+            drawer,
+            Rect {
+                x: 1280.0 - DRAWER_W,
+                y: TITLE_H,
+                w: DRAWER_W,
+                h: 800.0 - TITLE_H
+            }
+        );
         assert_eq!(hub.x + hub.w, drawer.x);
     }
 
     #[test]
     fn full_window_screens_hide_the_hub() {
-        for s in [Screen::Starting, Screen::Init, Screen::Offline, Screen::Quitting] {
+        for s in [
+            Screen::Starting,
+            Screen::Init,
+            Screen::Offline,
+            Screen::Quitting,
+        ] {
             let l = layout(s, true, 1280.0, 800.0);
-            assert_eq!(l.main, Rect { x: 0.0, y: 0.0, w: 1280.0, h: 800.0 });
+            assert_eq!(
+                l.main,
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1280.0,
+                    h: 800.0
+                }
+            );
             assert!(l.hub.is_none() && l.drawer.is_none(), "{s:?}");
         }
     }
@@ -865,26 +1087,61 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_timeout_is_retrying_until_its_grace_expires() {
+        assert_eq!(
+            agent_health_after_failure(Duration::from_secs(14)),
+            AgentHealth::Retrying
+        );
+        assert_eq!(
+            agent_health_after_failure(AGENT_STATUS_GRACE),
+            AgentHealth::Offline
+        );
+    }
+
+    #[test]
     fn only_an_https_origin_is_a_control_url() {
-        assert_eq!(parse_control("https://hub.lotusrain.net/x").unwrap().as_str(), "https://hub.lotusrain.net/");
-        for bad in ["http://hub.lotusrain.net", "https://u:p@hub.lotusrain.net", "https://hub.lotusrain.net/?a=1", "file:///etc", "javascript:alert(1)"] {
+        assert_eq!(
+            parse_control("https://hub.lotusrain.net/x")
+                .unwrap()
+                .as_str(),
+            "https://hub.lotusrain.net/"
+        );
+        for bad in [
+            "http://hub.lotusrain.net",
+            "https://u:p@hub.lotusrain.net",
+            "https://hub.lotusrain.net/?a=1",
+            "file:///etc",
+            "javascript:alert(1)",
+        ] {
             assert!(parse_control(bad).is_none(), "{bad}");
         }
     }
 
     #[test]
     fn explicit_local_control_override_wins_over_the_agent_endpoint() {
-        let control = resolve_control(Some("http://localhost:3000/path"), Some("https://hub.lotusrain.net"));
+        let control = resolve_control(
+            Some("http://localhost:3000/path"),
+            Some("https://hub.lotusrain.net"),
+        );
         assert_eq!(control.unwrap().as_str(), "http://localhost:3000/");
     }
 
     #[test]
     fn an_invalid_control_override_does_not_fall_back_to_production() {
-        assert!(resolve_control(Some("http://hub.lotusrain.net"), Some("https://hub.lotusrain.net")).is_none());
+        assert!(resolve_control(
+            Some("http://hub.lotusrain.net"),
+            Some("https://hub.lotusrain.net")
+        )
+        .is_none());
     }
 
     #[test]
     fn absent_control_override_keeps_the_agent_endpoint() {
-        assert_eq!(resolve_control(None, Some("https://control.example.test/path")).unwrap().as_str(), "https://control.example.test/");
+        assert_eq!(
+            resolve_control(None, Some("https://control.example.test/path"))
+                .unwrap()
+                .as_str(),
+            "https://control.example.test/"
+        );
     }
 }

@@ -9,6 +9,14 @@ type Spec = { spinner?: boolean; title: string; text: string; progress?: boolean
 
 function spec(s: Snapshot, openSettings: () => void): Spec {
   const settings: Action = { label: "打开设置", run: openSettings, secondary: true };
+  if (s.agent_health === "offline") {
+    return {
+      spinner: true,
+      title: "本机服务暂时无法连接",
+      text: "客户端正在重试本机服务连接。",
+      actions: [{ label: "立即重试", run: () => void invoke("shell_reconnect") }, settings],
+    };
+  }
   switch (s.screen) {
     case "init": {
       const failed = !!s.engine_error;
@@ -30,7 +38,14 @@ function spec(s: Snapshot, openSettings: () => void): Spec {
     case "quitting":
       return { spinner: true, title: "正在安全清理临时浏览器数据…", text: "完成后客户端会自动退出，请勿强制关闭。" };
     default:
-      return { spinner: true, title: "正在启动", text: "正在连接 LotusHub…" };
+      if (s.agent_health === "healthy") {
+        return { spinner: true, title: "正在连接 LotusHub", text: "本机服务已就绪，正在加载工作区…" };
+      }
+      return {
+        spinner: true,
+        title: "正在启动本地组件",
+        text: s.agent_health === "retrying" ? "本机服务暂时未响应，正在重试。" : "正在等待本地 Agent 健康检查…",
+      };
   }
 }
 

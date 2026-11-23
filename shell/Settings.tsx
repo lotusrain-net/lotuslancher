@@ -1,6 +1,6 @@
 import { AlertModal, Button, Card, Switch, Toast, cn } from "@proxyshard/shardx-ui-kit";
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { act, invoke, presenceTime, problem, say, type Prefs, type Snapshot } from "./bridge";
+import { act, invoke, presenceTime, problem, say, sessionLabel, statusLabel, transientFailure, type Prefs, type Snapshot } from "./bridge";
 import { CloseGlyph } from "./glyphs";
 
 type Note = { status: "success" | "error"; text: string } | null;
@@ -64,7 +64,7 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
     setBusy(key);
     p().then(
       () => ok && toast({ status: "success", text: ok }),
-      (e) => toast({ status: "error", text: say(e) }),
+      (e) => { if (!transientFailure(e)) toast({ status: "error", text: say(e) }); },
     ).finally(() => {
       setBusy(null);
       refresh();
@@ -74,10 +74,15 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
   const p = problem(snap);
   const active = !!snap?.status?.session_active;
   const status = snap?.status;
-  const connecting = !status || status.connection !== "online";
+  const agentHealth = snap?.agent_health ?? (status ? "healthy" : "checking");
+  const connecting = agentHealth !== "healthy" || !status || status.connection !== "online";
   const connectedRecently = !!status?.last_presence_at;
-  const statusText = p?.text ?? (connecting && !connectedRecently ? "正在连接" : "服务连接正常");
-  const transportText = status?.transport === "connected" ? "实时通道已连接" : connectedRecently ? "实时通道正在恢复" : "实时通道尚未连接";
+  const statusText = statusLabel(snap, p);
+  const transportText = status?.transport === "connected"
+    ? "实时通道已连接"
+    : status?.connection !== "online" || connectedRecently
+      ? "实时通道正在重连"
+      : "实时通道尚未连接";
 
   return (
     <div className="flex min-h-full flex-col">
@@ -97,7 +102,7 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
       <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
         <Section title="状态与诊断" index={1}>
           <div className="mb-3 flex items-center gap-2">
-            <span className={cn("size-2 rounded-full", p || connecting && !connectedRecently ? "bg-warning-base" : "bg-success-base")} aria-hidden="true" />
+            <span className={cn("size-2 rounded-full", p || connecting ? "bg-warning-base" : "bg-success-base")} aria-hidden="true" />
             <span className="text-body font-medium text-text-strong-950">{statusText}</span>
             {p && (
               <Button
@@ -122,6 +127,9 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
               </Row>
               <Row label="通道状态">
                 {() => <span className="text-body text-text-sub-600">{transportText}</span>}
+              </Row>
+              <Row label="会话状态">
+                {() => <span className="text-body text-text-sub-600">{sessionLabel(status)}</span>}
               </Row>
             </div>
           </details>

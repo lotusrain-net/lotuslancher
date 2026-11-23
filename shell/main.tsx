@@ -5,7 +5,7 @@ import { LabelsProvider, ThemeProvider } from "@proxyshard/shardx-ui-kit";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "./shell.css";
-import { invoke, problem, useSnapshot } from "./bridge";
+import { agentNeedsAttention, invoke, useSnapshot } from "./bridge";
 import { Page } from "./Pages";
 import { Settings } from "./Settings";
 import { TitleBar } from "./TitleBar";
@@ -15,7 +15,7 @@ const closeDrawer = () => void invoke("shell_set_drawer", { open: false });
 
 function MainView() {
   const { snap, progress, refresh } = useSnapshot();
-  if (snap?.screen === "daily") return <TitleBar drawer={snap.drawer} attention={!!problem(snap)} maximized={snap.maximized} />;
+  if (snap?.screen === "daily") return <TitleBar drawer={snap.drawer} attention={agentNeedsAttention(snap)} maximized={snap.maximized} />;
   return <Page snap={snap ?? ({ screen: "starting" } as never)} progress={progress} refresh={refresh} />;
 }
 
