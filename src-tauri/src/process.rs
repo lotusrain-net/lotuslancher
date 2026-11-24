@@ -23,7 +23,10 @@ pub struct Spawned {
 impl Spawned {
     /// `pid` as it runs now; None where its start cannot be read.
     pub fn of(pid: u32) -> Option<Spawned> {
-        since::started_at(pid).map(|t| Spawned { pid, since_ms: ms(t) })
+        since::started_at(pid).map(|t| Spawned {
+            pid,
+            since_ms: ms(t),
+        })
     }
 
     /// Still that process.
@@ -33,7 +36,8 @@ impl Spawned {
 }
 
 fn ms(t: std::time::SystemTime) -> u64 {
-    t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 pub struct Tracker {
@@ -124,7 +128,14 @@ impl Tracker {
             let mut g = self.inner.lock().unwrap();
             let previous = g.insert(
                 profile_id.clone(),
-                ChildEntry { pid, gen, killer: tx, cdp: None, started_at: Instant::now(), extensions },
+                ChildEntry {
+                    pid,
+                    gen,
+                    killer: tx,
+                    cdp: None,
+                    started_at: Instant::now(),
+                    extensions,
+                },
             );
             // Replacing the entry drops the old killer and orphans that browser.
             // `launch` refuses a second launch up front; this is the backstop.
@@ -172,15 +183,25 @@ impl Tracker {
             match exit {
                 ExitHook::Remote(hand) => hand.closed().await,
                 ExitHook::Synced(hand) => {
-                    after_exit(&profile_id, &ExitHook::Local, started_at.elapsed().as_millis() as u64);
+                    after_exit(
+                        &profile_id,
+                        &ExitHook::Local,
+                        started_at.elapsed().as_millis() as u64,
+                    );
                     hand.closed().await;
                 }
                 ExitHook::Sealed(open) => {
-                    after_exit(&profile_id, &ExitHook::Local, started_at.elapsed().as_millis() as u64);
+                    after_exit(
+                        &profile_id,
+                        &ExitHook::Local,
+                        started_at.elapsed().as_millis() as u64,
+                    );
                     let id = profile_id.clone();
                     match tokio::task::spawn_blocking(move || open.seal()).await {
                         Ok(Ok(())) => {}
-                        Ok(Err(e)) => eprintln!("[launcher] {id}: browser data left unsealed: {e:#}"),
+                        Ok(Err(e)) => {
+                            eprintln!("[launcher] {id}: browser data left unsealed: {e:#}")
+                        }
                         Err(e) => eprintln!("[launcher] {id}: sealing stopped: {e}"),
                     }
                 }
@@ -218,8 +239,11 @@ impl Tracker {
     /// Profiles running with library extension `lib_id`.
     pub fn users_of(&self, lib_id: &str) -> Vec<String> {
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let mut out: Vec<String> =
-            g.iter().filter(|(_, e)| e.extensions.iter().any(|x| x == lib_id)).map(|(id, _)| id.clone()).collect();
+        let mut out: Vec<String> = g
+            .iter()
+            .filter(|(_, e)| e.extensions.iter().any(|x| x == lib_id))
+            .map(|(id, _)| id.clone())
+            .collect();
         out.sort();
         out
     }
@@ -268,13 +292,21 @@ const END_WAIT: Duration = Duration::from_secs(3);
 
 /// The browser socket of `profile_id`: as tracked, else as its folder says.
 fn cdp_of(profile_id: &str, udd: &Path) -> Option<String> {
-    Tracker::shared().cdp(profile_id).map(|c| c.web_socket_debugger_url).or_else(|| close::cdp_in(udd))
+    Tracker::shared()
+        .cdp(profile_id)
+        .map(|c| c.web_socket_debugger_url)
+        .or_else(|| close::cdp_in(udd))
 }
 
 /// Our own child, until it is gone. Stop asks it to quit (see `close`), which
 /// saves its data so the next launch skips the restore prompt; past QUIT_WAIT
 /// it is asked the ways not tried yet, and END_WAIT after that taken the hard way.
-async fn watch_child(profile_id: &str, udd: &Path, child: &mut Child, rx: &mut tokio::sync::mpsc::Receiver<StopAck>) {
+async fn watch_child(
+    profile_id: &str,
+    udd: &Path,
+    child: &mut Child,
+    rx: &mut tokio::sync::mpsc::Receiver<StopAck>,
+) {
     let mut asked: Option<tokio::time::Instant> = None;
     // When the second ask was done: CDP may take seconds over it, and END_WAIT is the browser's.
     let mut ended: Option<tokio::time::Instant> = None;
@@ -345,7 +377,11 @@ struct Asked {
 /// end is that browser, since the process we spawned is already gone.
 async fn watch_lock(profile_id: &str, udd: &Path, rx: &mut tokio::sync::mpsc::Receiver<StopAck>) {
     let mut waited = Duration::ZERO;
-    let step = if cfg!(test) { Duration::from_millis(100) } else { Duration::from_secs(2) };
+    let step = if cfg!(test) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(2)
+    };
     let mut asked: Option<Asked> = None;
     let mut listening = true;
     while crate::reset::lock_is_live(udd) {
@@ -487,7 +523,9 @@ fn lock_holder_pid(udd: &Path) -> Option<u32> {
     if runs_on(pid, udd) {
         return Some(pid);
     }
-    let written = std::fs::symlink_metadata(&lock).and_then(|m| m.modified()).ok()?;
+    let written = std::fs::symlink_metadata(&lock)
+        .and_then(|m| m.modified())
+        .ok()?;
     // Slack for Linux, which counts a start in clock ticks from a boot time in whole seconds.
     let since = since::started_at(pid)?;
     (since <= written + Duration::from_secs(2)).then_some(pid)
@@ -497,7 +535,9 @@ fn lock_holder_pid(udd: &Path) -> Option<u32> {
 /// forward after the lock was written moves a start read there past the lock.
 #[cfg(target_os = "linux")]
 fn runs_on(pid: u32, udd: &Path) -> bool {
-    let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+    let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+        return false;
+    };
     let want = format!("--user-data-dir={}", udd.display());
     raw.split(|b| *b == 0).any(|a| a == want.as_bytes())
 }
@@ -573,7 +613,11 @@ fn after_exit(profile_id: &str, exit: &ExitHook, elapsed_ms: u64) -> bool {
 /// when it died before the browser wrote one: asked to close, then taken the hard way.
 pub(crate) async fn end_browser(udd: &Path, spawned: Option<Spawned>) {
     let at = udd.to_path_buf();
-    let Ok(Some((pid, since))) = tokio::task::spawn_blocking(move || browser_on(&at, spawned)).await else { return };
+    let Ok(Some((pid, since))) =
+        tokio::task::spawn_blocking(move || browser_on(&at, spawned)).await
+    else {
+        return;
+    };
     // Gone once that process is; where its start cannot be read, once its lock is free.
     let gone = |udd: &Path| match since {
         Some(s) => !s.running(),
@@ -610,7 +654,10 @@ pub(crate) async fn end_browser(udd: &Path, spawned: Option<Spawned>) {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    eprintln!("[launcher] the browser on {} would not close", udd.display());
+    eprintln!(
+        "[launcher] the browser on {} would not close",
+        udd.display()
+    );
 }
 
 /// The browser on `udd`, and its start where that can be read.
@@ -651,7 +698,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn stop_ends_our_own_child() {
-        let mut child = tokio::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let mut child = tokio::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let pid = child.id().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<super::StopAck>(1);
         let press = async {
@@ -659,7 +709,12 @@ mod tests {
             tx.try_send(ack).unwrap();
             assert!(answer.await.unwrap(), "our own child is always a real stop");
         };
-        let watch = super::watch_child("p-test", std::path::Path::new("/nonexistent"), &mut child, &mut rx);
+        let watch = super::watch_child(
+            "p-test",
+            std::path::Path::new("/nonexistent"),
+            &mut child,
+            &mut rx,
+        );
         tokio::time::timeout(std::time::Duration::from_secs(20), async {
             tokio::join!(watch, press)
         })
@@ -681,7 +736,10 @@ mod tests {
         // earlier launcher run is: `sh` spawns it and exits. Its own output
         // goes nowhere, or it would hold this pipe open for the full minute.
         let out = std::process::Command::new("sh")
-            .args(["-c", "set -m; sleep 60 </dev/null >/dev/null 2>&1 & echo $!"])
+            .args([
+                "-c",
+                "set -m; sleep 60 </dev/null >/dev/null 2>&1 & echo $!",
+            ])
             .output()
             .unwrap();
         let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
@@ -704,7 +762,10 @@ mod tests {
         let press = async {
             let (ack, answer) = tokio::sync::oneshot::channel();
             tx.try_send(ack).unwrap();
-            assert!(answer.await.unwrap(), "Stop reached nothing while the lock was held");
+            assert!(
+                answer.await.unwrap(),
+                "Stop reached nothing while the lock was held"
+            );
         };
         tokio::time::timeout(std::time::Duration::from_secs(20), async {
             tokio::join!(watch.as_mut(), press)
@@ -748,7 +809,13 @@ mod tests {
         let id = format!("watch-{}", uuid::Uuid::new_v4().simple());
         let udd = tmp_udd();
         let child = tokio::process::Command::new("true").spawn().unwrap();
-        super::Tracker::shared().track(id.clone(), child, udd.clone(), super::ExitHook::Local, Vec::new());
+        super::Tracker::shared().track(
+            id.clone(),
+            child,
+            udd.clone(),
+            super::ExitHook::Local,
+            Vec::new(),
+        );
         tokio::time::timeout(std::time::Duration::from_secs(20), async {
             while super::Tracker::shared().is_running(&id) {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -776,7 +843,11 @@ mod tests {
         assert_eq!(super::lock_holder_pid(&udd), None);
         symlink(format!("some-host-{browser}"), &lock).unwrap();
         assert_eq!(super::lock_holder_pid(&udd), Some(browser));
-        for bad in [format!("-{browser}"), "some-host-nope".into(), browser.to_string()] {
+        for bad in [
+            format!("-{browser}"),
+            "some-host-nope".into(),
+            browser.to_string(),
+        ] {
             std::fs::remove_file(&lock).unwrap();
             symlink(&bad, &lock).unwrap();
             assert_eq!(super::lock_holder_pid(&udd), None, "{bad}");
@@ -798,17 +869,33 @@ mod tests {
         symlink(format!("{host}-{stranger}"), &lock).unwrap();
         // Written an hour before that process began, as before a reboot.
         let path = std::ffi::CString::new(lock.as_os_str().as_encoded_bytes()).unwrap();
-        let then = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - 3600;
-        let tv = libc::timeval { tv_sec: then as _, tv_usec: 0 };
+        let then = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 3600;
+        let tv = libc::timeval {
+            tv_sec: then as _,
+            tv_usec: 0,
+        };
         // SAFETY: a NUL-terminated path and two times.
-        assert_eq!(unsafe { libc::lutimes(path.as_ptr(), [tv, tv].as_ptr()) }, 0);
+        assert_eq!(
+            unsafe { libc::lutimes(path.as_ptr(), [tv, tv].as_ptr()) },
+            0
+        );
         assert!(crate::reset::lock_is_live(&udd), "its pid is alive");
         assert_eq!(super::lock_holder_pid(&udd), None);
 
         super::end_browser(&udd, None).await;
-        assert!(pid_alive(stranger), "the process that took the pid was signalled");
+        assert!(
+            pid_alive(stranger),
+            "the process that took the pid was signalled"
+        );
         // Its start known from when it was spawned: still not that one.
-        let earlier = super::Spawned { pid: stranger, since_ms: then * 1000 };
+        let earlier = super::Spawned {
+            pid: stranger,
+            since_ms: then * 1000,
+        };
         super::end_browser(&udd, Some(earlier)).await;
         assert!(pid_alive(stranger));
         end(stranger);
@@ -847,7 +934,10 @@ mod tests {
             "trap 'echo INT >> {g}' INT; trap 'echo TERM >> {g}' TERM; while :; do sleep 0.05; done",
             g = got.display()
         );
-        let mut child = tokio::process::Command::new("sh").args(["-c", &script]).spawn().unwrap();
+        let mut child = tokio::process::Command::new("sh")
+            .args(["-c", &script])
+            .spawn()
+            .unwrap();
         // Its traps are set once it has run a beat.
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<super::StopAck>(1);
@@ -860,7 +950,10 @@ mod tests {
             }
         };
         tokio::time::timeout(std::time::Duration::from_secs(20), async {
-            tokio::join!(super::watch_child("p-test", &udd, &mut child, &mut rx), press)
+            tokio::join!(
+                super::watch_child("p-test", &udd, &mut child, &mut rx),
+                press
+            )
         })
         .await
         .expect("taken the hard way 8 s after the ask");
@@ -877,12 +970,30 @@ mod tests {
         let id = format!("twice-{}", uuid::Uuid::new_v4().simple());
         let (a, b) = (tmp_udd(), tmp_udd());
         let t = super::Tracker::shared();
-        let first = tokio::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let first = tokio::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let first_pid = first.id().unwrap();
-        t.track(id.clone(), first, a.clone(), super::ExitHook::Temporary, Vec::new());
-        let second = tokio::process::Command::new("sleep").arg("60").spawn().unwrap();
+        t.track(
+            id.clone(),
+            first,
+            a.clone(),
+            super::ExitHook::Temporary,
+            Vec::new(),
+        );
+        let second = tokio::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let second_pid = second.id().unwrap();
-        t.track(id.clone(), second, b.clone(), super::ExitHook::Temporary, Vec::new());
+        t.track(
+            id.clone(),
+            second,
+            b.clone(),
+            super::ExitHook::Temporary,
+            Vec::new(),
+        );
         for _ in 0..100 {
             if !pid_alive(first_pid) {
                 break;
@@ -891,8 +1002,14 @@ mod tests {
         }
         assert!(!pid_alive(first_pid), "the one replaced was stopped");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        assert!(t.is_running(&id), "the first watch took the second entry with it");
-        assert!(t.kill(&id).await.unwrap(), "the second browser could not be stopped");
+        assert!(
+            t.is_running(&id),
+            "the first watch took the second entry with it"
+        );
+        assert!(
+            t.kill(&id).await.unwrap(),
+            "the second browser could not be stopped"
+        );
         for _ in 0..100 {
             if !t.is_running(&id) {
                 break;
@@ -924,15 +1041,23 @@ mod tests {
             assert!(answer.await.unwrap());
             std::fs::remove_file(&lock).unwrap();
             symlink(format!("{host}-{next}"), &lock).unwrap();
-            tokio::time::sleep(super::QUIT_WAIT + super::END_WAIT + std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(
+                super::QUIT_WAIT + super::END_WAIT + std::time::Duration::from_secs(2),
+            )
+            .await;
         };
         tokio::select! {
             _ = watch.as_mut() => panic!("the watch ended with the lock still held"),
             _ = script => {}
         }
-        assert!(pid_alive(asked), "pid {asked} was forced after the lock named {next}");
+        assert!(
+            pid_alive(asked),
+            "pid {asked} was forced after the lock named {next}"
+        );
         end(next);
-        tokio::time::timeout(std::time::Duration::from_secs(10), watch).await.expect("the watch ends once the lock is free");
+        tokio::time::timeout(std::time::Duration::from_secs(10), watch)
+            .await
+            .expect("the watch ends once the lock is free");
         end(asked);
         std::fs::remove_dir_all(&udd).unwrap();
     }
@@ -954,7 +1079,10 @@ mod tests {
     #[cfg(unix)]
     fn stray() -> u32 {
         let out = std::process::Command::new("sh")
-            .args(["-c", "set -m; sleep 60 </dev/null >/dev/null 2>&1 & echo $!"])
+            .args([
+                "-c",
+                "set -m; sleep 60 </dev/null >/dev/null 2>&1 & echo $!",
+            ])
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()

@@ -62,7 +62,14 @@ pub struct Progress {
 /// Directories that move; everything else in the config dir stays where the
 /// launcher can always find it. A team copy kept for a new invite moves too,
 /// or no sweep would find it again.
-const MOVED: &[&str] = &["profiles", "user-data", "extensions", "trash", "team-open", "protected"];
+const MOVED: &[&str] = &[
+    "profiles",
+    "user-data",
+    "extensions",
+    "trash",
+    "team-open",
+    "protected",
+];
 
 fn emit(app: &tauri::AppHandle, p: Progress) {
     let _ = app.emit("data-migration", p);
@@ -85,7 +92,13 @@ pub(crate) fn run_with(dst: &Path, emit: &dyn Fn(Progress)) -> Result<u64> {
     let out = refuse_while_busy().and_then(|()| do_run(dst, emit));
     MIGRATING.store(false, Ordering::SeqCst);
     if out.is_err() {
-        emit(Progress { phase: "done", done: 0, total: 0, percent: 100, current: String::new() });
+        emit(Progress {
+            phase: "done",
+            done: 0,
+            total: 0,
+            percent: 100,
+            current: String::new(),
+        });
     }
     out
 }
@@ -114,7 +127,13 @@ fn do_run(dst: &Path, emit: &dyn Fn(Progress)) -> Result<u64> {
     std::fs::create_dir_all(&dst).with_context(|| format!("create {}", dst.display()))?;
     writable(&dst)?;
 
-    emit(Progress { phase: "scan", done: 0, total: 0, percent: 0, current: String::new() });
+    emit(Progress {
+        phase: "scan",
+        done: 0,
+        total: 0,
+        percent: 0,
+        current: String::new(),
+    });
     let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
     for name in MOVED {
         let from = src.join(name);
@@ -125,7 +144,13 @@ fn do_run(dst: &Path, emit: &dyn Fn(Progress)) -> Result<u64> {
     let total = files.len() as u64;
     if total == 0 {
         finish(&dst)?;
-        emit(Progress { phase: "done", done: 0, total: 0, percent: 100, current: String::new() });
+        emit(Progress {
+            phase: "done",
+            done: 0,
+            total: 0,
+            percent: 100,
+            current: String::new(),
+        });
         return Ok(0);
     }
 
@@ -154,17 +179,32 @@ fn do_run(dst: &Path, emit: &dyn Fn(Progress)) -> Result<u64> {
         }
     }
 
-    emit(Progress { phase: "verify", done, total, percent: 100, current: String::new() });
+    emit(Progress {
+        phase: "verify",
+        done,
+        total,
+        percent: 100,
+        current: String::new(),
+    });
     for (from, to) in &files {
         let a = std::fs::metadata(from).map(|m| m.len()).unwrap_or(0);
         let b = std::fs::metadata(to).map(|m| m.len()).unwrap_or(u64::MAX);
         if a != b {
-            anyhow::bail!("{} did not copy cleanly — nothing was deleted", from.display());
+            anyhow::bail!(
+                "{} did not copy cleanly — nothing was deleted",
+                from.display()
+            );
         }
     }
 
     // Only now is the old copy expendable.
-    emit(Progress { phase: "cleanup", done, total, percent: 100, current: String::new() });
+    emit(Progress {
+        phase: "cleanup",
+        done,
+        total,
+        percent: 100,
+        current: String::new(),
+    });
     finish(&dst)?;
     for name in MOVED {
         let old = src.join(name);
@@ -173,7 +213,13 @@ fn do_run(dst: &Path, emit: &dyn Fn(Progress)) -> Result<u64> {
         }
     }
 
-    emit(Progress { phase: "done", done, total, percent: 100, current: String::new() });
+    emit(Progress {
+        phase: "done",
+        done,
+        total,
+        percent: 100,
+        current: String::new(),
+    });
     Ok(done)
 }
 
@@ -190,8 +236,7 @@ fn finish(dst: &Path) -> Result<()> {
 /// read-only looks like an ordinary directory until something is written.
 fn writable(dir: &Path) -> Result<()> {
     let probe = dir.join(".shardx-write-test");
-    std::fs::write(&probe, b"ok")
-        .with_context(|| format!("{} is not writable", dir.display()))?;
+    std::fs::write(&probe, b"ok").with_context(|| format!("{} is not writable", dir.display()))?;
     let _ = std::fs::remove_file(&probe);
     Ok(())
 }

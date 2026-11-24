@@ -31,6 +31,31 @@ const MANIFEST_URL: &str =
 /// Kept short on purpose: giving up early only costs this launch its update
 /// check, while waiting costs the operator a launcher that looks stuck.
 const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+/// Keep a broken route from stalling first-run setup; reqwest applies this
+/// deadline to the response body as well as connecting and receiving headers.
+const DOWNLOAD_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+const DOWNLOAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+const PROXY_DOWNLOAD_ATTEMPTS: u8 = 1;
+const DIRECT_DOWNLOAD_ATTEMPTS: u8 = 4;
+const DOWNLOAD_ATTEMPT_COUNT: u8 = PROXY_DOWNLOAD_ATTEMPTS + DIRECT_DOWNLOAD_ATTEMPTS;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DownloadRoute {
+    SystemProxy,
+    Direct,
+}
+
+fn download_attempts() -> impl Iterator<Item = (DownloadRoute, u8)> {
+    (1..=DOWNLOAD_ATTEMPT_COUNT).map(|attempt| (download_route(attempt), attempt))
+}
+
+fn download_route(attempt: u8) -> DownloadRoute {
+    if attempt <= PROXY_DOWNLOAD_ATTEMPTS {
+        DownloadRoute::SystemProxy
+    } else {
+        DownloadRoute::Direct
+    }
+}
 const LAUNCHER_RELEASE_REPO: &str = "ProxyShard/ShardBrowser";
 /// Chromium version baked into the current bundle (used for Mac Framework path).
 pub const CHROMIUM_VERSION: &str = "158.0.8127.36";
@@ -185,7 +210,10 @@ fn installed_engine_version() -> Option<String> {
 
 /// The engine folder beside its staging folder and backup (swap.rs).
 fn host_layout() -> Option<swap::Layout> {
-    Some(swap::Layout::host(runtime_dir().ok()?, &host_spec()?.browser.key))
+    Some(swap::Layout::host(
+        runtime_dir().ok()?,
+        &host_spec()?.browser.key,
+    ))
 }
 
 /// Read-held while the GPU probe runs the engine, write-held while an install
@@ -234,7 +262,9 @@ pub fn recover_at_start() {
     }
     tauri::async_runtime::spawn(async move {
         let _one = install_lock().lock().await;
-        let _ = tokio::task::spawn_blocking(move || swap::sweep(&layout, &swap::Ops::real(&layout))).await;
+        let _ =
+            tokio::task::spawn_blocking(move || swap::sweep(&layout, &swap::Ops::real(&layout)))
+                .await;
     });
 }
 
@@ -245,7 +275,9 @@ fn recover_swap(layout: &swap::Layout) {
     }
     // Stopped between the swap and its record: the record the journal carries
     // is saved now, or the engine on disk would be downloaded again.
-    let Some(record) = swap::finished(layout) else { return };
+    let Some(record) = swap::finished(layout) else {
+        return;
+    };
     let mut m = load_manifest();
     apply_record(&mut m, &record);
     if save_manifest(&m).is_ok() {
@@ -318,10 +350,21 @@ mod install_error_tests {
         let old = r#"{"stage":"busy","message":"m","running_browsers":2,"engine_kept":true,"target":"e1","at_ms":1}"#;
         let err: InstallError = serde_json::from_str(old).unwrap();
         assert_eq!((err.running_browsers, err.starting), (2, 0));
-        let starting = InstallError { starting: 1, running_browsers: 0, ..err };
-        let told = serde_json::to_value(Failed { err: &starting, update_staged: true }).unwrap();
+        let starting = InstallError {
+            starting: 1,
+            running_browsers: 0,
+            ..err
+        };
+        let told = serde_json::to_value(Failed {
+            err: &starting,
+            update_staged: true,
+        })
+        .unwrap();
         assert_eq!(told["stage"], "busy");
-        assert_eq!((told["starting"].as_u64(), told["running_browsers"].as_u64()), (Some(1), Some(0)));
+        assert_eq!(
+            (told["starting"].as_u64(), told["running_browsers"].as_u64()),
+            (Some(1), Some(0))
+        );
         assert_eq!(told["update_staged"], true);
     }
 }
@@ -335,15 +378,23 @@ mod gate_tests {
     #[tokio::test]
     async fn a_probe_and_an_install_never_overlap() {
         let install = super::engine_gate().write().await;
-        assert!(super::engine_use().is_none(), "a probe started during an install");
+        assert!(
+            super::engine_use().is_none(),
+            "a probe started during an install"
+        );
         drop(install);
 
         let probe = super::engine_use().expect("no install under way");
-        let waited = tokio::time::timeout(Duration::from_millis(200), super::engine_gate().write()).await;
+        let waited =
+            tokio::time::timeout(Duration::from_millis(200), super::engine_gate().write()).await;
         assert!(waited.is_err(), "the install did not wait for the probe");
         drop(probe);
-        let install = tokio::time::timeout(Duration::from_secs(5), super::engine_gate().write()).await;
-        assert!(install.is_ok(), "the install did not get the engine once the probe ended");
+        let install =
+            tokio::time::timeout(Duration::from_secs(5), super::engine_gate().write()).await;
+        assert!(
+            install.is_ok(),
+            "the install did not get the engine once the probe ended"
+        );
     }
 }
 
@@ -379,7 +430,9 @@ fn effective_installed_version(local: &Manifest) -> Option<String> {
 }
 
 fn load_manifest() -> Manifest {
-    let Ok(p) = manifest_path() else { return Manifest::default() };
+    let Ok(p) = manifest_path() else {
+        return Manifest::default();
+    };
     fs::read_to_string(p)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -461,16 +514,34 @@ struct RemoteManifest {
 /// three answer "no manifest", never an error, because `runtime_status` renders
 /// the interface behind this call.
 async fn fetch_manifest() -> RemoteManifest {
-    fetch_manifest_at(MANIFEST_URL, MANIFEST_TIMEOUT).await
+    fetch_manifest_with_proxy(MANIFEST_URL, MANIFEST_TIMEOUT, true).await
 }
 
 /// The fetch itself, address and budget passed in so a test can aim it at a
-/// server that never answers.
+/// local server without the host's configured system proxy.
+#[cfg(test)]
 async fn fetch_manifest_at(url: &str, budget: std::time::Duration) -> RemoteManifest {
-    async fn inner(url: &str, budget: std::time::Duration) -> Option<RemoteManifest> {
+    fetch_manifest_with_proxy(url, budget, false).await
+}
+
+async fn fetch_manifest_with_proxy(
+    url: &str,
+    budget: std::time::Duration,
+    use_system_proxy: bool,
+) -> RemoteManifest {
+    async fn inner(
+        url: &str,
+        budget: std::time::Duration,
+        use_system_proxy: bool,
+    ) -> Option<RemoteManifest> {
         // One budget for connect + headers + body: reqwest hands the deadline on
         // to the response, so a server that stalls mid-answer is bounded too.
-        let resp = reqwest::Client::new().get(url).timeout(budget).send().await.ok()?;
+        let mut builder = reqwest::Client::builder().timeout(budget);
+        if !use_system_proxy {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().ok()?;
+        let resp = client.get(url).send().await.ok()?;
         if !resp.status().is_success() {
             return None;
         }
@@ -510,7 +581,9 @@ async fn fetch_manifest_at(url: &str, budget: std::time::Duration) -> RemoteMani
             min_launcher_version: str_field("min_launcher_version"),
         })
     }
-    inner(url, budget).await.unwrap_or_default()
+    inner(url, budget, use_system_proxy)
+        .await
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -533,9 +606,15 @@ mod manifest_fetch_tests {
         let waited = started.elapsed();
         held.abort();
 
-        assert!(m.archives.is_empty(), "a silent server must not yield archives");
+        assert!(
+            m.archives.is_empty(),
+            "a silent server must not yield archives"
+        );
         assert!(m.chromium_version.is_none());
-        assert!(waited < budget * 10, "the fetch waited {waited:?} on a silent server");
+        assert!(
+            waited < budget * 10,
+            "the fetch waited {waited:?} on a silent server"
+        );
     }
 }
 
@@ -561,13 +640,25 @@ fn migrate_dir_to(
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&p) else { continue };
-        let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Ok(text) = fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
         // A protected profile's fingerprint is sealed: it is migrated when it is unlocked.
         if cfg.pointer("/_meta/lock").is_some() {
             continue;
         }
-        if migrate_value(&mut cfg, chromium_version, grease_brand, grease_version, tls, android_version, desktop_versions) {
+        if migrate_value(
+            &mut cfg,
+            chromium_version,
+            grease_brand,
+            grease_version,
+            tls,
+            android_version,
+            desktop_versions,
+        ) {
             fs::write(&p, serde_json::to_string_pretty(&cfg)?)?;
             n += 1;
         }
@@ -593,10 +684,19 @@ fn migrate_value(
     let same_major = |v: &&str| v.split('.').count() == 4 && v.split('.').next() == Some(major);
     // A phone reports the Android build of this major, and a desktop profile the build its OS
     // is shipped, when the manifest names one.
-    let chromium_version = if cfg.as_object().is_some_and(crate::space::profile::claims_mobile) {
-        android_version.filter(same_major).unwrap_or(chromium_version)
+    let chromium_version = if cfg
+        .as_object()
+        .is_some_and(crate::space::profile::claims_mobile)
+    {
+        android_version
+            .filter(same_major)
+            .unwrap_or(chromium_version)
     } else {
-        let platform = cfg.pointer("/navigator/platform").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let platform = cfg
+            .pointer("/navigator/platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         desktop_versions
             .and_then(|m| m.get(&platform))
             .map(String::as_str)
@@ -641,7 +741,10 @@ fn migrate_value(
             }
             if let Some(gv) = grease_version {
                 wants.push(("grease_version", serde_json::json!(gv)));
-                wants.push(("grease_full_version", serde_json::json!(format!("{gv}.0.0.0"))));
+                wants.push((
+                    "grease_full_version",
+                    serde_json::json!(format!("{gv}.0.0.0")),
+                ));
             }
             for (k, want) in wants {
                 if ch.get(k) != Some(&want) {
@@ -673,7 +776,10 @@ fn migrate_value(
         if add_chrome_brand(cfg) {
             changed = true;
         }
-        if cfg.as_object_mut().is_some_and(crate::settle_platform_version) {
+        if cfg
+            .as_object_mut()
+            .is_some_and(crate::settle_platform_version)
+        {
             changed = true;
         }
         changed
@@ -686,13 +792,20 @@ const CHROME_BRAND: &str = "Google Chrome";
 /// Names the brand on a phone profile that names none: Android templates lacked it, and the
 /// brand list then held only "Chromium" and GREASE. A brand the profile names stays.
 fn add_chrome_brand(cfg: &mut serde_json::Value) -> bool {
-    if !cfg.as_object().is_some_and(crate::space::profile::claims_mobile) {
+    if !cfg
+        .as_object()
+        .is_some_and(crate::space::profile::claims_mobile)
+    {
         return false;
     }
     let Some(ch) = cfg.get_mut("client_hints").and_then(|v| v.as_object_mut()) else {
         return false;
     };
-    if ch.get("brand").and_then(|v| v.as_str()).is_some_and(|b| !b.is_empty()) {
+    if ch
+        .get("brand")
+        .and_then(|v| v.as_str())
+        .is_some_and(|b| !b.is_empty())
+    {
         return false;
     }
     ch.insert("brand".into(), CHROME_BRAND.into());
@@ -711,18 +824,30 @@ fn add_apple_webgpu_features(cfg: &mut serde_json::Value) -> bool {
         .pointer("/webgl/renderer")
         .and_then(|v| v.as_str())
         .and_then(|r| r.find("Apple M").map(|i| &r[i + 7..]))
-        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok());
+        .and_then(|rest| {
+            rest.split(|c: char| !c.is_ascii_digit())
+                .next()?
+                .parse()
+                .ok()
+        });
     let apple_adapter = cfg.pointer("/webgpu/vendor").and_then(|v| v.as_str()) == Some("apple");
     let Some(generation) = generation.filter(|_| apple_adapter) else {
         return false;
     };
-    let Some(list) = cfg.pointer_mut("/webgpu/features").and_then(|v| v.as_array_mut()) else {
+    let Some(list) = cfg
+        .pointer_mut("/webgpu/features")
+        .and_then(|v| v.as_array_mut())
+    else {
         return false;
     };
     if list.is_empty() {
         return false;
     }
-    let m2: &[&str] = if generation >= 2 { APPLE_M2_WEBGPU_ADDED } else { &[] };
+    let m2: &[&str] = if generation >= 2 {
+        APPLE_M2_WEBGPU_ADDED
+    } else {
+        &[]
+    };
     let mut changed = false;
     for &feat in APPLE_WEBGPU_ADDED.iter().chain(m2) {
         if list.iter().any(|v| v.as_str() == Some(feat)) {
@@ -747,10 +872,26 @@ mod platform_version_migration_tests {
     fn a_saved_profile_loses_a_windows_version_chrome_never_reports() {
         let mut p = json!({ "navigator": { "platform": "Windows", "platform_version": "17.0.0" },
             "client_hints": { "brand_full_version": "156.0.8078.48", "platform_version": "17.0.0" } });
-        assert!(migrate_value(&mut p, "157.0.8103.39", None, None, None, None, None));
-        assert_eq!((p["navigator"]["platform_version"].as_str(), p["client_hints"]["platform_version"].as_str()),
-            (Some("19.0.0"), Some("19.0.0")));
-        assert!(!migrate_value(&mut p, "157.0.8103.39", None, None, None, None, None), "once");
+        assert!(migrate_value(
+            &mut p,
+            "157.0.8103.39",
+            None,
+            None,
+            None,
+            None,
+            None
+        ));
+        assert_eq!(
+            (
+                p["navigator"]["platform_version"].as_str(),
+                p["client_hints"]["platform_version"].as_str()
+            ),
+            (Some("19.0.0"), Some("19.0.0"))
+        );
+        assert!(
+            !migrate_value(&mut p, "157.0.8103.39", None, None, None, None, None),
+            "once"
+        );
     }
 }
 
@@ -768,40 +909,129 @@ mod android_version_tests {
     #[test]
     fn a_phone_reports_the_android_build_and_a_desktop_the_engine_one() {
         let mut p = phone();
-        assert!(migrate_value(&mut p, "157.0.8103.39", None, None, None, Some("157.0.8103.38"), None));
+        assert!(migrate_value(
+            &mut p,
+            "157.0.8103.39",
+            None,
+            None,
+            None,
+            Some("157.0.8103.38"),
+            None
+        ));
         let ch = &p["client_hints"];
-        assert_eq!((ch["brand_version"].as_str(), ch["brand_full_version"].as_str()), (Some("157"), Some("157.0.8103.38")));
-        assert_eq!((ch["chrome_build"].as_i64(), ch["chrome_patch"].as_i64()), (Some(8103), Some(38)));
-        assert!(p["navigator"]["user_agent"].as_str().unwrap().contains("Chrome/157.0.0.0 Mobile"));
-        assert!(!migrate_value(&mut p, "157.0.8103.39", None, None, None, Some("157.0.8103.38"), None), "once");
+        assert_eq!(
+            (
+                ch["brand_version"].as_str(),
+                ch["brand_full_version"].as_str()
+            ),
+            (Some("157"), Some("157.0.8103.38"))
+        );
+        assert_eq!(
+            (ch["chrome_build"].as_i64(), ch["chrome_patch"].as_i64()),
+            (Some(8103), Some(38))
+        );
+        assert!(p["navigator"]["user_agent"]
+            .as_str()
+            .unwrap()
+            .contains("Chrome/157.0.0.0 Mobile"));
+        assert!(
+            !migrate_value(
+                &mut p,
+                "157.0.8103.39",
+                None,
+                None,
+                None,
+                Some("157.0.8103.38"),
+                None
+            ),
+            "once"
+        );
 
         let mut desk = json!({ "navigator": { "platform": "Win32", "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/156.0.0.0 Safari/537.36" },
             "client_hints": { "mobile": false, "brand_full_version": "156.0.8078.48" } });
-        migrate_value(&mut desk, "157.0.8103.39", None, None, None, Some("157.0.8103.38"), None);
+        migrate_value(
+            &mut desk,
+            "157.0.8103.39",
+            None,
+            None,
+            None,
+            Some("157.0.8103.38"),
+            None,
+        );
         assert_eq!(desk["client_hints"]["brand_full_version"], "157.0.8103.39");
     }
 
     #[test]
     fn each_desktop_os_reports_the_build_it_is_shipped() {
-        let versions: super::DesktopVersions = [("macOS", "158.0.8127.37"), ("Windows", "158.0.8127.37"), ("Linux", "158.0.8127.36")]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        for (platform, want) in [("macOS", "158.0.8127.37"), ("Windows", "158.0.8127.37"), ("Linux", "158.0.8127.36")] {
+        let versions: super::DesktopVersions = [
+            ("macOS", "158.0.8127.37"),
+            ("Windows", "158.0.8127.37"),
+            ("Linux", "158.0.8127.36"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        for (platform, want) in [
+            ("macOS", "158.0.8127.37"),
+            ("Windows", "158.0.8127.37"),
+            ("Linux", "158.0.8127.36"),
+        ] {
             let mut p = json!({ "navigator": { "platform": platform, "user_agent": "Mozilla/5.0 Chrome/157.0.0.0 Safari/537.36" },
                 "client_hints": { "mobile": false, "brand_full_version": "157.0.8103.39" } });
-            assert!(migrate_value(&mut p, "158.0.8127.36", None, None, None, None, Some(&versions)));
+            assert!(migrate_value(
+                &mut p,
+                "158.0.8127.36",
+                None,
+                None,
+                None,
+                None,
+                Some(&versions)
+            ));
             assert_eq!(p["client_hints"]["brand_full_version"], want, "{platform}");
-            assert_eq!(p["client_hints"]["chrome_patch"].as_i64(), want.rsplit('.').next().unwrap().parse().ok(), "{platform}");
-            assert!(!migrate_value(&mut p, "158.0.8127.36", None, None, None, None, Some(&versions)), "once: {platform}");
+            assert_eq!(
+                p["client_hints"]["chrome_patch"].as_i64(),
+                want.rsplit('.').next().unwrap().parse().ok(),
+                "{platform}"
+            );
+            assert!(
+                !migrate_value(
+                    &mut p,
+                    "158.0.8127.36",
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&versions)
+                ),
+                "once: {platform}"
+            );
         }
         // A phone keeps the Android build; another major and an unnamed OS take the engine's.
         let mut p = phone();
-        migrate_value(&mut p, "158.0.8127.36", None, None, None, Some("158.0.8127.42"), Some(&versions));
+        migrate_value(
+            &mut p,
+            "158.0.8127.36",
+            None,
+            None,
+            None,
+            Some("158.0.8127.42"),
+            Some(&versions),
+        );
         assert_eq!(p["client_hints"]["brand_full_version"], "158.0.8127.42");
-        let other: super::DesktopVersions = [("Windows".to_string(), "157.0.8103.50".to_string())].into_iter().collect();
-        let mut w = json!({ "navigator": { "platform": "Windows" }, "client_hints": { "mobile": false } });
-        migrate_value(&mut w, "158.0.8127.36", None, None, None, None, Some(&other));
+        let other: super::DesktopVersions = [("Windows".to_string(), "157.0.8103.50".to_string())]
+            .into_iter()
+            .collect();
+        let mut w =
+            json!({ "navigator": { "platform": "Windows" }, "client_hints": { "mobile": false } });
+        migrate_value(
+            &mut w,
+            "158.0.8127.36",
+            None,
+            None,
+            None,
+            None,
+            Some(&other),
+        );
         assert_eq!(w["client_hints"]["brand_full_version"], "158.0.8127.36");
     }
 
@@ -810,7 +1040,10 @@ mod android_version_tests {
         for android in [None, Some("156.0.8078.81"), Some("157.0.8103"), Some("")] {
             let mut p = phone();
             migrate_value(&mut p, "157.0.8103.39", None, None, None, android, None);
-            assert_eq!(p["client_hints"]["brand_full_version"], "157.0.8103.39", "{android:?}");
+            assert_eq!(
+                p["client_hints"]["brand_full_version"], "157.0.8103.39",
+                "{android:?}"
+            );
         }
     }
 }
@@ -859,42 +1092,93 @@ mod apple_webgpu_tests {
 
     #[test]
     fn an_apple_m_list_gains_the_feature_in_place_and_only_once() {
-        let mut cfg = mac(M1, "apple", json!(["shader-f16", "texture-compression-etc2", "texture-formats-tier1", "timestamp-query"]));
+        let mut cfg = mac(
+            M1,
+            "apple",
+            json!([
+                "shader-f16",
+                "texture-compression-etc2",
+                "texture-formats-tier1",
+                "timestamp-query"
+            ]),
+        );
         let before = cfg.clone();
         assert!(add_apple_webgpu_features(&mut cfg));
         assert_eq!(
             cfg["webgpu"]["features"],
-            json!(["shader-f16", "texture-compression-etc2", "texture-compression-unaligned", "texture-formats-tier1", "timestamp-query"])
+            json!([
+                "shader-f16",
+                "texture-compression-etc2",
+                "texture-compression-unaligned",
+                "texture-formats-tier1",
+                "timestamp-query"
+            ])
         );
         let mut rest = cfg.clone();
         rest["webgpu"]["features"] = before["webgpu"]["features"].clone();
         assert_eq!(rest, before, "only webgpu.features may change");
 
         let once = cfg.clone();
-        assert!(!add_apple_webgpu_features(&mut cfg), "a second pass must change nothing");
+        assert!(
+            !add_apple_webgpu_features(&mut cfg),
+            "a second pass must change nothing"
+        );
         assert_eq!(cfg, once);
     }
 
     #[test]
     fn m2_and_later_also_gain_the_157_feature_and_m1_does_not() {
         let m3 = "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)";
-        let mut cfg = mac(m3, "apple", json!(["shader-f16", "texture-compression-unaligned"]));
+        let mut cfg = mac(
+            m3,
+            "apple",
+            json!(["shader-f16", "texture-compression-unaligned"]),
+        );
         assert!(add_apple_webgpu_features(&mut cfg));
-        assert_eq!(cfg["webgpu"]["features"], json!(["atomic-vec2u-min-max", "shader-f16", "texture-compression-unaligned"]));
-        let mut m1 = mac(M1, "apple", json!(["shader-f16", "texture-compression-unaligned"]));
-        assert!(!add_apple_webgpu_features(&mut m1), "M1 has no atomic-vec2u-min-max");
+        assert_eq!(
+            cfg["webgpu"]["features"],
+            json!([
+                "atomic-vec2u-min-max",
+                "shader-f16",
+                "texture-compression-unaligned"
+            ])
+        );
+        let mut m1 = mac(
+            M1,
+            "apple",
+            json!(["shader-f16", "texture-compression-unaligned"]),
+        );
+        assert!(
+            !add_apple_webgpu_features(&mut m1),
+            "M1 has no atomic-vec2u-min-max"
+        );
     }
 
     #[test]
     fn other_gpus_and_host_lists_are_left_alone() {
         let feats = json!(["shader-f16", "texture-compression-bc"]);
-        let intel_mac = mac("ANGLE (Intel, ANGLE Metal Renderer: Intel(R) UHD Graphics 630, Unspecified Version)", "intel", feats.clone());
+        let intel_mac = mac(
+            "ANGLE (Intel, ANGLE Metal Renderer: Intel(R) UHD Graphics 630, Unspecified Version)",
+            "intel",
+            feats.clone(),
+        );
         let windows = json!({ "webgl": { "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11)" }, "webgpu": { "vendor": "nvidia", "features": feats.clone() } });
         let mismatched = mac(M1, "intel", feats.clone());
-        let apple_gpu_not_m = mac("ANGLE (Apple, ANGLE Metal Renderer: Apple GPU, Unspecified Version)", "apple", feats.clone());
+        let apple_gpu_not_m = mac(
+            "ANGLE (Apple, ANGLE Metal Renderer: Apple GPU, Unspecified Version)",
+            "apple",
+            feats.clone(),
+        );
         let no_list = json!({ "webgl": { "renderer": M1 }, "webgpu": { "vendor": "apple" } });
         let empty_list = mac(M1, "apple", json!([]));
-        for mut cfg in [intel_mac, windows, mismatched, apple_gpu_not_m, no_list, empty_list] {
+        for mut cfg in [
+            intel_mac,
+            windows,
+            mismatched,
+            apple_gpu_not_m,
+            no_list,
+            empty_list,
+        ] {
             let before = cfg.clone();
             assert!(!add_apple_webgpu_features(&mut cfg));
             assert_eq!(cfg, before);
@@ -907,12 +1191,36 @@ mod apple_webgpu_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("p.json");
-        std::fs::write(&file, mac(M1, "apple", json!(["texture-compression-etc2", "timestamp-query"])).to_string()).unwrap();
+        std::fs::write(
+            &file,
+            mac(
+                M1,
+                "apple",
+                json!(["texture-compression-etc2", "timestamp-query"]),
+            )
+            .to_string(),
+        )
+        .unwrap();
 
-        assert_eq!(migrate_dir_to(&dir, "156.0.8078.48", None, None, None, None, None).unwrap(), 1);
-        let got: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-        assert_eq!(got["webgpu"]["features"], json!(["texture-compression-etc2", "texture-compression-unaligned", "timestamp-query"]));
-        assert_eq!(migrate_dir_to(&dir, "156.0.8078.48", None, None, None, None, None).unwrap(), 0, "a second run must write nothing");
+        assert_eq!(
+            migrate_dir_to(&dir, "156.0.8078.48", None, None, None, None, None).unwrap(),
+            1
+        );
+        let got: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            got["webgpu"]["features"],
+            json!([
+                "texture-compression-etc2",
+                "texture-compression-unaligned",
+                "timestamp-query"
+            ])
+        );
+        assert_eq!(
+            migrate_dir_to(&dir, "156.0.8078.48", None, None, None, None, None).unwrap(),
+            0,
+            "a second run must write nothing"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -931,8 +1239,12 @@ fn adopt_library_fields(dir: &Path) -> Result<usize> {
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&p) else { continue };
-        let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Ok(text) = fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
         // Sealed: matched by its name alone it would gain readable keys; done when it is unlocked.
         if cfg.pointer("/_meta/lock").is_some() {
             continue;
@@ -958,7 +1270,10 @@ fn library_by_key() -> std::collections::HashMap<String, serde_json::Value> {
 }
 
 /// The library's newer keys put into one profile's config; whether it changed.
-fn adopt_value(cfg: &mut serde_json::Value, lib: &std::collections::HashMap<String, serde_json::Value>) -> bool {
+fn adopt_value(
+    cfg: &mut serde_json::Value,
+    lib: &std::collections::HashMap<String, serde_json::Value>,
+) -> bool {
     {
         let key = cfg
             .pointer("/_meta/gpu_preset_id")
@@ -1020,7 +1335,9 @@ fn adopt_value(cfg: &mut serde_json::Value, lib: &std::collections::HashMap<Stri
 /// The battery the library pinned on every desktop template until 18.11: plugged in and full,
 /// the one state a machine without a battery reports.
 fn is_desktop_battery(b: Option<&serde_json::Value>) -> bool {
-    let Some(b) = b.and_then(|v| v.as_object()) else { return false };
+    let Some(b) = b.and_then(|v| v.as_object()) else {
+        return false;
+    };
     let num = |k: &str| b.get(k).and_then(|v| v.as_f64());
     b.get("charging").and_then(|v| v.as_bool()) == Some(true)
         && num("level") == Some(1.0)
@@ -1042,15 +1359,20 @@ fn adopt_laptop_battery(cfg: &mut serde_json::Value, src: &serde_json::Value) ->
 /// they now claim 1710x1112. A profile with the old size moves, its window with it.
 fn adopt_air15_screen(cfg: &mut serde_json::Value, src: &serde_json::Value) -> bool {
     let size = |v: &serde_json::Value| {
-        (v.pointer("/screen/width").and_then(|x| x.as_i64()), v.pointer("/screen/height").and_then(|x| x.as_i64()))
+        (
+            v.pointer("/screen/width").and_then(|x| x.as_i64()),
+            v.pointer("/screen/height").and_then(|x| x.as_i64()),
+        )
     };
     if size(cfg) != (Some(1680), Some(1050)) || size(src) != (Some(1710), Some(1112)) {
         return false;
     }
     let get = |path: &str| cfg.pointer(path).and_then(|x| x.as_i64());
-    let (Some(avail_h), Some(outer_h), Some(inner_h)) =
-        (get("/screen/avail_height"), get("/window/outer_height"), get("/window/inner_height"))
-    else {
+    let (Some(avail_h), Some(outer_h), Some(inner_h)) = (
+        get("/screen/avail_height"),
+        get("/window/outer_height"),
+        get("/window/inner_height"),
+    ) else {
         return false;
     };
     let new_avail = 1112 - (1050 - avail_h);
@@ -1078,25 +1400,50 @@ const RETIRED_TEMPLATES: &[(&str, &str)] = &[("linux-unknown-amdcedardr", "linux
 
 /// The library id that took over a retired one.
 pub(crate) fn retired_successor(id: &str) -> Option<&'static str> {
-    RETIRED_TEMPLATES.iter().find(|(old, _)| *old == id).map(|(_, new)| *new)
+    RETIRED_TEMPLATES
+        .iter()
+        .find(|(old, _)| *old == id)
+        .map(|(_, new)| *new)
 }
 
 /// Linux templates claimed Vulkan until 20.11, which Chrome on Linux never reports (it draws through GLX):
 /// such a profile, or one from a retired template, takes the template's whole WebGL block.
-fn adopt_linux_gl_webgl(cfg: &mut serde_json::Value, src: &serde_json::Value, successor: Option<&str>) -> bool {
-    let renderer = |v: &serde_json::Value| v.pointer("/webgl/renderer").and_then(|x| x.as_str()).unwrap_or("").to_string();
+fn adopt_linux_gl_webgl(
+    cfg: &mut serde_json::Value,
+    src: &serde_json::Value,
+    successor: Option<&str>,
+) -> bool {
+    let renderer = |v: &serde_json::Value| {
+        v.pointer("/webgl/renderer")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let (have, want) = (renderer(cfg), renderer(src));
-    let desktop_linux = cfg.pointer("/navigator/user_agent").and_then(|v| v.as_str()).is_some_and(|ua| ua.contains("X11; Linux"));
-    let glx = want.starts_with("ANGLE (") && want.contains(", OpenGL ") && !want.contains("OpenGL ES");
-    if !desktop_linux || !glx || have == want || !(successor.is_some() || have.contains(", Vulkan ")) {
+    let desktop_linux = cfg
+        .pointer("/navigator/user_agent")
+        .and_then(|v| v.as_str())
+        .is_some_and(|ua| ua.contains("X11; Linux"));
+    let glx =
+        want.starts_with("ANGLE (") && want.contains(", OpenGL ") && !want.contains("OpenGL ES");
+    if !desktop_linux
+        || !glx
+        || have == want
+        || !(successor.is_some() || have.contains(", Vulkan "))
+    {
         return false;
     }
-    let Some(from) = src.get("webgl").and_then(|v| v.as_object()).cloned() else { return false };
-    let Some(to) = cfg.get_mut("webgl").and_then(|v| v.as_object_mut()) else { return false };
+    let Some(from) = src.get("webgl").and_then(|v| v.as_object()).cloned() else {
+        return false;
+    };
+    let Some(to) = cfg.get_mut("webgl").and_then(|v| v.as_object_mut()) else {
+        return false;
+    };
     for (k, v) in from {
         // An empty list or table means "the host's own"; it stays.
         let host_own = to.get(&k).is_some_and(|x| {
-            x.as_array().is_some_and(|a| a.is_empty()) || x.as_object().is_some_and(|o| o.is_empty())
+            x.as_array().is_some_and(|a| a.is_empty())
+                || x.as_object().is_some_and(|o| o.is_empty())
         });
         if !host_own {
             to.insert(k, v);
@@ -1111,7 +1458,10 @@ fn adopt_linux_gl_webgl(cfg: &mut serde_json::Value, src: &serde_json::Value, su
     if let Some(new) = successor {
         // The tablet's "Linux armv81" and touch screen do not belong to a desktop with that card.
         for key in ["platform_value", "max_touch_points"] {
-            if let (Some(v), Some(nav)) = (src.pointer(&format!("/navigator/{key}")).cloned(), cfg.get_mut("navigator").and_then(|v| v.as_object_mut())) {
+            if let (Some(v), Some(nav)) = (
+                src.pointer(&format!("/navigator/{key}")).cloned(),
+                cfg.get_mut("navigator").and_then(|v| v.as_object_mut()),
+            ) {
                 nav.insert(key.into(), v);
             }
         }
@@ -1127,14 +1477,20 @@ fn adopt_linux_gl_webgl(cfg: &mut serde_json::Value, src: &serde_json::Value, su
 /// WebGL extensions and getParameter answers the template gained for the same GPU (Chrome 158
 /// added WEBGL_shader_pixel_local_storage and its two limits): added, never removed or changed.
 fn adopt_webgl_extensions(cfg: &mut serde_json::Value, src: &serde_json::Value) -> bool {
-    if cfg.pointer("/webgl/renderer").is_none() || cfg.pointer("/webgl/renderer") != src.pointer("/webgl/renderer") {
+    if cfg.pointer("/webgl/renderer").is_none()
+        || cfg.pointer("/webgl/renderer") != src.pointer("/webgl/renderer")
+    {
         return false;
     }
     let mut changed = false;
     for key in ["extensions", "extensions_v2"] {
         let path = format!("/webgl/{key}");
-        let Some(want) = src.pointer(&path).and_then(|v| v.as_array()).cloned() else { continue };
-        let Some(have) = cfg.pointer_mut(&path).and_then(|v| v.as_array_mut()) else { continue };
+        let Some(want) = src.pointer(&path).and_then(|v| v.as_array()).cloned() else {
+            continue;
+        };
+        let Some(have) = cfg.pointer_mut(&path).and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
         // An empty list means "the host's own"; leave it.
         if have.is_empty() {
             continue;
@@ -1147,8 +1503,15 @@ fn adopt_webgl_extensions(cfg: &mut serde_json::Value, src: &serde_json::Value) 
         }
     }
     // An empty or missing table answers with the host's values; leave it.
-    let want = src.pointer("/webgl/parameters").and_then(|v| v.as_object()).cloned();
-    if let (Some(want), Some(have)) = (want, cfg.pointer_mut("/webgl/parameters").and_then(|v| v.as_object_mut())) {
+    let want = src
+        .pointer("/webgl/parameters")
+        .and_then(|v| v.as_object())
+        .cloned();
+    if let (Some(want), Some(have)) = (
+        want,
+        cfg.pointer_mut("/webgl/parameters")
+            .and_then(|v| v.as_object_mut()),
+    ) {
         if !have.is_empty() {
             for (k, v) in want {
                 if !have.contains_key(&k) {
@@ -1170,10 +1533,16 @@ const PHONE_GL_MAKERS: &[&str] = &["Qualcomm", "ARM"];
 /// does. The library's 2-core Windows templates were raised to 4 (the low-end
 /// Pentium, Celeron and APU machines they describe run 4 threads).
 fn adopt_desktop_min_cores(cfg: &mut serde_json::Value) -> bool {
-    if cfg.as_object().is_some_and(crate::space::profile::claims_mobile) {
+    if cfg
+        .as_object()
+        .is_some_and(crate::space::profile::claims_mobile)
+    {
         return false;
     }
-    match cfg.pointer("/navigator/hardware_concurrency").and_then(|v| v.as_u64()) {
+    match cfg
+        .pointer("/navigator/hardware_concurrency")
+        .and_then(|v| v.as_u64())
+    {
         Some(1..=3) => {
             cfg["navigator"]["hardware_concurrency"] = 4.into();
             true
@@ -1185,11 +1554,20 @@ fn adopt_desktop_min_cores(cfg: &mut serde_json::Value) -> bool {
 /// A phone's bare WebGL vendor/renderer in the ANGLE form Chrome on Android reports (#131):
 /// "Qualcomm" / "Adreno (TM) 619" become "Google Inc. (Qualcomm)" / "ANGLE (Qualcomm, Adreno (TM) 619, OpenGL ES 3.2)".
 fn adopt_phone_angle_webgl(cfg: &mut serde_json::Value) -> bool {
-    if !cfg.as_object().is_some_and(crate::space::profile::claims_mobile) {
+    if !cfg
+        .as_object()
+        .is_some_and(crate::space::profile::claims_mobile)
+    {
         return false;
     }
-    let Some(gl) = cfg.get_mut("webgl").and_then(|v| v.as_object_mut()) else { return false };
-    let vendor = gl.get("vendor").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let Some(gl) = cfg.get_mut("webgl").and_then(|v| v.as_object_mut()) else {
+        return false;
+    };
+    let vendor = gl
+        .get("vendor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let Some(maker) = PHONE_GL_MAKERS
         .iter()
         .find(|m| vendor == **m || vendor == format!("Google Inc. ({m})"))
@@ -1201,9 +1579,16 @@ fn adopt_phone_angle_webgl(cfg: &mut serde_json::Value) -> bool {
         gl.insert("vendor".into(), format!("Google Inc. ({maker})").into());
         changed = true;
     }
-    let renderer = gl.get("renderer").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let renderer = gl
+        .get("renderer")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if !renderer.is_empty() && !renderer.starts_with("ANGLE (") {
-        gl.insert("renderer".into(), format!("ANGLE ({maker}, {renderer}, OpenGL ES 3.2)").into());
+        gl.insert(
+            "renderer".into(),
+            format!("ANGLE ({maker}, {renderer}, OpenGL ES 3.2)").into(),
+        );
         changed = true;
     }
     changed
@@ -1218,11 +1603,18 @@ fn adopt_phone_platform_version(
     lib: &std::collections::HashMap<String, serde_json::Value>,
 ) -> bool {
     use crate::platform_version::is_android_release;
-    if !cfg.as_object().is_some_and(crate::space::profile::claims_mobile) {
+    if !cfg
+        .as_object()
+        .is_some_and(crate::space::profile::claims_mobile)
+    {
         return false;
     }
     let read = |v: &serde_json::Value, block: &str| {
-        v.get(block)?.get("platform_version")?.as_str().filter(|s| !s.is_empty()).map(String::from)
+        v.get(block)?
+            .get("platform_version")?
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(String::from)
     };
     // The engine reads client_hints over navigator.
     let current = read(cfg, "client_hints").or_else(|| read(cfg, "navigator"));
@@ -1230,15 +1622,23 @@ fn adopt_phone_platform_version(
         return false;
     }
     let release = |t: &serde_json::Value| read(t, "client_hints").filter(|v| is_android_release(v));
-    let model = cfg.pointer("/client_hints/model").and_then(|v| v.as_str()).filter(|m| !m.is_empty());
+    let model = cfg
+        .pointer("/client_hints/model")
+        .and_then(|v| v.as_str())
+        .filter(|m| !m.is_empty());
     // Two templates of one model can differ: the newest release, so the pick does not hang on order.
     let by_model = || {
         lib.values()
-            .filter(|t| model.is_some() && t.pointer("/client_hints/model").and_then(|v| v.as_str()) == model)
+            .filter(|t| {
+                model.is_some()
+                    && t.pointer("/client_hints/model").and_then(|v| v.as_str()) == model
+            })
             .filter_map(release)
             .max_by_key(|v| v.split('.').next().and_then(|m| m.parse::<u32>().ok()))
     };
-    let Some(want) = src.and_then(release).or_else(by_model) else { return false };
+    let Some(want) = src.and_then(release).or_else(by_model) else {
+        return false;
+    };
     for block in ["client_hints", "navigator"] {
         if read(cfg, block).is_some_and(|v| !is_android_release(&v)) {
             cfg[block]["platform_version"] = want.clone().into();
@@ -1280,11 +1680,14 @@ mod adopt_tests {
     fn adopt_moves_an_air15_laptop_to_its_battery_screen_and_extensions() {
         let mut lib = std::collections::HashMap::new();
         let r = "ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)";
-        lib.insert("mac-m3-air15".to_string(), json!({
+        lib.insert(
+            "mac-m3-air15".to_string(),
+            json!({
             "screen": {"width": 1710, "height": 1112, "avail_width": 1710, "avail_height": 1075},
             "battery": {"laptop": true},
             "webgl": {"renderer": r, "extensions_v2": ["EXT_a", "WEBGL_shader_pixel_local_storage"],
-                      "parameters": {"0x0D33": 16384, "0x96E0": 8, "0x96E1": 8}}}));
+                      "parameters": {"0x0D33": 16384, "0x96E0": 8, "0x96E1": 8}}}),
+        );
         let mut p = json!({"name": "Profile 3", "_meta": {"gpu_preset_id": "mac-m3-air15"},
             "screen": {"width": 1680, "height": 1050, "avail_width": 1680, "avail_height": 1013},
             "window": {"outer_width": 1680, "outer_height": 1012, "inner_width": 1680, "inner_height": 925},
@@ -1292,20 +1695,45 @@ mod adopt_tests {
             "webgl": {"renderer": r, "extensions_v2": ["EXT_a"], "parameters": {"0x0D33": 8192}}});
         assert!(super::adopt_value(&mut p, &lib));
         assert_eq!(p["battery"], json!({"laptop": true}));
-        assert_eq!((p["screen"]["width"].clone(), p["screen"]["avail_height"].clone()), (json!(1710), json!(1075)));
-        assert_eq!((p["window"]["outer_height"].clone(), p["window"]["inner_height"].clone()), (json!(1074), json!(987)));
-        assert_eq!(p["webgl"]["extensions_v2"], json!(["EXT_a", "WEBGL_shader_pixel_local_storage"]));
+        assert_eq!(
+            (
+                p["screen"]["width"].clone(),
+                p["screen"]["avail_height"].clone()
+            ),
+            (json!(1710), json!(1075))
+        );
+        assert_eq!(
+            (
+                p["window"]["outer_height"].clone(),
+                p["window"]["inner_height"].clone()
+            ),
+            (json!(1074), json!(987))
+        );
+        assert_eq!(
+            p["webgl"]["extensions_v2"],
+            json!(["EXT_a", "WEBGL_shader_pixel_local_storage"])
+        );
         // New limits come in; a value the profile already has stays.
-        assert_eq!(p["webgl"]["parameters"], json!({"0x0D33": 8192, "0x96E0": 8, "0x96E1": 8}));
+        assert_eq!(
+            p["webgl"]["parameters"],
+            json!({"0x0D33": 8192, "0x96E0": 8, "0x96E1": 8})
+        );
         assert!(!super::adopt_value(&mut p, &lib), "once");
         let mut host = json!({"_meta": {"gpu_preset_id": "mac-m3-air15"}, "webgl": {"renderer": r, "parameters": {}}});
         super::adopt_value(&mut host, &lib);
-        assert_eq!(host["webgl"]["parameters"], json!({}), "an empty table means the host's values");
+        assert_eq!(
+            host["webgl"]["parameters"],
+            json!({}),
+            "an empty table means the host's values"
+        );
         // A battery the operator set, a desktop template, and another GPU stay as they are.
         let mut own = json!({"_meta": {"gpu_preset_id": "mac-m3-air15"}, "battery": {"charging": false, "level": 0.4},
             "webgl": {"renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)", "extensions_v2": ["EXT_a"]}});
         assert!(!super::adopt_value(&mut own, &lib));
-        lib.insert("mac-m3-imac24".to_string(), json!({"battery": {"charging": true, "level": 1, "charging_time": 0}}));
+        lib.insert(
+            "mac-m3-imac24".to_string(),
+            json!({"battery": {"charging": true, "level": 1, "charging_time": 0}}),
+        );
         let mut desk = json!({"_meta": {"gpu_preset_id": "mac-m3-imac24"},
             "battery": {"charging": true, "level": 1, "charging_time": 0, "discharging_time": "Infinity"}});
         assert!(!super::adopt_value(&mut desk, &lib));
@@ -1314,23 +1742,44 @@ mod adopt_tests {
     #[test]
     fn adopt_matches_by_preset_id_then_name() {
         let mut lib = std::collections::HashMap::new();
-        lib.insert("android-oppo-a6-5g".to_string(), json!({"fonts": [["sans-serif"]]}));
+        lib.insert(
+            "android-oppo-a6-5g".to_string(),
+            json!({"fonts": [["sans-serif"]]}),
+        );
         let renamed = json!({"name": "shop 4", "_meta": {"gpu_preset_id": "android-oppo-a6-5g"}});
-        assert!(pick(&renamed, &lib).is_some(), "a renamed profile still matches by id");
+        assert!(
+            pick(&renamed, &lib).is_some(),
+            "a renamed profile still matches by id"
+        );
         let by_name = json!({"name": "android-oppo-a6-5g"});
-        assert!(pick(&by_name, &lib).is_some(), "an older profile matches by name");
+        assert!(
+            pick(&by_name, &lib).is_some(),
+            "an older profile matches by name"
+        );
     }
 
     #[test]
     fn adopt_takes_subgroup_sizes_only_for_the_same_gpu() {
         let mut lib = std::collections::HashMap::new();
-        lib.insert("win-rtx3060".to_string(), json!({"webgpu": {"vendor": "nvidia", "architecture": "ampere",
-            "features": ["shader-f16"], "subgroupMinSize": 32, "subgroupMaxSize": 32}}));
-        lib.insert("android-x".to_string(), json!({"webgpu": {"vendor": "arm", "architecture": "valhall",
-            "features": ["shader-f16"], "subgroupMinSize": null, "subgroupMaxSize": null}}));
+        lib.insert(
+            "win-rtx3060".to_string(),
+            json!({"webgpu": {"vendor": "nvidia", "architecture": "ampere",
+            "features": ["shader-f16"], "subgroupMinSize": 32, "subgroupMaxSize": 32}}),
+        );
+        lib.insert(
+            "android-x".to_string(),
+            json!({"webgpu": {"vendor": "arm", "architecture": "valhall",
+            "features": ["shader-f16"], "subgroupMinSize": null, "subgroupMaxSize": null}}),
+        );
         let mut same = json!({"name": "win-rtx3060", "webgpu": {"vendor": "nvidia", "architecture": "ampere", "features": ["shader-f16"]}});
         assert!(super::adopt_value(&mut same, &lib));
-        assert_eq!((same["webgpu"]["subgroupMinSize"].clone(), same["webgpu"]["subgroupMaxSize"].clone()), (json!(32), json!(32)));
+        assert_eq!(
+            (
+                same["webgpu"]["subgroupMinSize"].clone(),
+                same["webgpu"]["subgroupMaxSize"].clone()
+            ),
+            (json!(32), json!(32))
+        );
         assert!(!super::adopt_value(&mut same, &lib), "once");
         // A pre-157 capture (D3D12 max 128) and a stored null both give way to the template.
         let mut stale = json!({"name": "win-rtx3060", "webgpu": {"vendor": "nvidia", "architecture": "ampere",
@@ -1366,35 +1815,63 @@ mod adopt_tests {
             "webgl": {"vendor": "Google Inc. (Intel)", "renderer": glx, "extensions": ["EXT_new"], "extensions_v2": ["EXT_new2"], "parameters": {"0x0D33": 16384}}}));
         lib.insert("linux-navi21".to_string(), json!({"notes": navi, "navigator": {"platform_value": "Linux x86_64", "max_touch_points": 0},
             "webgl": {"vendor": "Google Inc. (AMD)", "renderer": navi, "extensions": ["EXT_amd"], "parameters": {"0x0D33": 16384}}}));
-        let old = |id: &str, r: &str, notes: &str| json!({"name": "Profile 7", "notes": notes, "_meta": {"gpu_preset_id": id},
+        let old = |id: &str, r: &str, notes: &str| {
+            json!({"name": "Profile 7", "notes": notes, "_meta": {"gpu_preset_id": id},
             "navigator": {"user_agent": LINUX_UA, "platform_value": "Linux armv81", "max_touch_points": 5},
-            "webgl": {"vendor": "Google Inc. (Intel)", "renderer": r, "extensions": ["EXT_old"], "extensions_v2": ["EXT_old2"], "parameters": {"0x0D33": 8192}, "own_key": 1}});
+            "webgl": {"vendor": "Google Inc. (Intel)", "renderer": r, "extensions": ["EXT_old"], "extensions_v2": ["EXT_old2"], "parameters": {"0x0D33": 8192}, "own_key": 1}})
+        };
 
         let mut p = old("linux-uhd620", vk, vk);
         assert!(super::adopt_value(&mut p, &lib));
-        assert_eq!(p["webgl"], json!({"vendor": "Google Inc. (Intel)", "renderer": glx, "extensions": ["EXT_new"], "extensions_v2": ["EXT_new2"], "parameters": {"0x0D33": 16384}, "own_key": 1}));
+        assert_eq!(
+            p["webgl"],
+            json!({"vendor": "Google Inc. (Intel)", "renderer": glx, "extensions": ["EXT_new"], "extensions_v2": ["EXT_new2"], "parameters": {"0x0D33": 16384}, "own_key": 1})
+        );
         assert_eq!(p["notes"], glx);
-        assert_eq!(p["navigator"]["platform_value"], "Linux armv81", "only a retired template moves the machine");
+        assert_eq!(
+            p["navigator"]["platform_value"], "Linux armv81",
+            "only a retired template moves the machine"
+        );
         assert!(!super::adopt_value(&mut p, &lib), "once");
 
         let mut kept_notes = old("linux-uhd620", vk, "work account");
         super::adopt_value(&mut kept_notes, &lib);
         assert_eq!(kept_notes["notes"], "work account");
 
-        let mut cedar = old("linux-unknown-amdcedardr", "AMD CEDAR (DRM 2.49.0 / 4.9.194-primeos+, LLVM 7.0.0)", "x");
+        let mut cedar = old(
+            "linux-unknown-amdcedardr",
+            "AMD CEDAR (DRM 2.49.0 / 4.9.194-primeos+, LLVM 7.0.0)",
+            "x",
+        );
         assert!(super::adopt_value(&mut cedar, &lib));
         assert_eq!(cedar["webgl"]["renderer"], navi);
         assert_eq!(cedar["_meta"]["gpu_preset_id"], "linux-navi21");
-        assert_eq!((cedar["navigator"]["platform_value"].clone(), cedar["navigator"]["max_touch_points"].clone()), (json!("Linux x86_64"), json!(0)));
+        assert_eq!(
+            (
+                cedar["navigator"]["platform_value"].clone(),
+                cedar["navigator"]["max_touch_points"].clone()
+            ),
+            (json!("Linux x86_64"), json!(0))
+        );
         assert!(!super::adopt_value(&mut cedar, &lib), "once");
 
         // An operator's own GLX capture, a host-own list, and a non-Linux profile stay as they are.
-        let mut own = old("linux-uhd620", "ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL ES 3.2)", "x");
+        let mut own = old(
+            "linux-uhd620",
+            "ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL ES 3.2)",
+            "x",
+        );
         assert!(!super::adopt_value(&mut own, &lib));
         let mut host = old("linux-uhd620", vk, "x");
         host["webgl"]["extensions"] = json!([]);
         super::adopt_value(&mut host, &lib);
-        assert_eq!((host["webgl"]["extensions"].clone(), host["webgl"]["renderer"].clone()), (json!([]), json!(glx)));
+        assert_eq!(
+            (
+                host["webgl"]["extensions"].clone(),
+                host["webgl"]["renderer"].clone()
+            ),
+            (json!([]), json!(glx))
+        );
         let mut win = old("linux-uhd620", vk, "x");
         win["navigator"]["user_agent"] = json!("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
         assert!(!super::adopt_value(&mut win, &lib));
@@ -1406,25 +1883,44 @@ mod adopt_tests {
     #[test]
     fn adopt_puts_a_phones_bare_webgl_into_the_angle_form() {
         let lib = std::collections::HashMap::new();
-        let phone = |vendor: &str, renderer: &str| json!({"navigator": {"user_agent": PHONE_UA},
-            "webgl": {"vendor_masked": "WebKit", "renderer_masked": "WebKit WebGL", "vendor": vendor, "renderer": renderer}});
+        let phone = |vendor: &str, renderer: &str| {
+            json!({"navigator": {"user_agent": PHONE_UA},
+            "webgl": {"vendor_masked": "WebKit", "renderer_masked": "WebKit WebGL", "vendor": vendor, "renderer": renderer}})
+        };
         let mut q = phone("Qualcomm", "Adreno (TM) 619");
         assert!(super::adopt_value(&mut q, &lib));
         assert_eq!(q["webgl"]["vendor"], "Google Inc. (Qualcomm)");
-        assert_eq!(q["webgl"]["renderer"], "ANGLE (Qualcomm, Adreno (TM) 619, OpenGL ES 3.2)");
-        assert_eq!((q["webgl"]["vendor_masked"].clone(), q["webgl"]["renderer_masked"].clone()), (json!("WebKit"), json!("WebKit WebGL")));
+        assert_eq!(
+            q["webgl"]["renderer"],
+            "ANGLE (Qualcomm, Adreno (TM) 619, OpenGL ES 3.2)"
+        );
+        assert_eq!(
+            (
+                q["webgl"]["vendor_masked"].clone(),
+                q["webgl"]["renderer_masked"].clone()
+            ),
+            (json!("WebKit"), json!("WebKit WebGL"))
+        );
         assert!(!super::adopt_value(&mut q, &lib), "once");
         let mut m = phone("ARM", "Mali-G57 MC2");
         assert!(super::adopt_value(&mut m, &lib));
         assert_eq!(m["webgl"]["vendor"], "Google Inc. (ARM)");
-        assert_eq!(m["webgl"]["renderer"], "ANGLE (ARM, Mali-G57 MC2, OpenGL ES 3.2)");
+        assert_eq!(
+            m["webgl"]["renderer"],
+            "ANGLE (ARM, Mali-G57 MC2, OpenGL ES 3.2)"
+        );
         // Half done: only the renderer moves.
         let mut half = phone("Google Inc. (ARM)", "Mali-G68");
         assert!(super::adopt_value(&mut half, &lib));
-        assert_eq!(half["webgl"]["renderer"], "ANGLE (ARM, Mali-G68, OpenGL ES 3.2)");
+        assert_eq!(
+            half["webgl"]["renderer"],
+            "ANGLE (ARM, Mali-G68, OpenGL ES 3.2)"
+        );
         // A maker the library has no ANGLE sample of, and a desktop, stay as they are.
-        for mut other in [phone("Imagination Technologies", "PowerVR Rogue GE8320"),
-                          json!({"navigator": {"user_agent": "Mozilla/5.0 (X11; Linux x86_64)"}, "webgl": {"vendor": "ARM", "renderer": "Mali-G57"}})] {
+        for mut other in [
+            phone("Imagination Technologies", "PowerVR Rogue GE8320"),
+            json!({"navigator": {"user_agent": "Mozilla/5.0 (X11; Linux x86_64)"}, "webgl": {"vendor": "ARM", "renderer": "Mali-G57"}}),
+        ] {
             let before = other.clone();
             assert!(!super::adopt_value(&mut other, &lib));
             assert_eq!(other, before);
@@ -1435,9 +1931,18 @@ mod adopt_tests {
     #[test]
     fn adopt_gives_a_phone_its_templates_platform_version() {
         let mut lib = std::collections::HashMap::new();
-        lib.insert("android-s24".to_string(), json!({"client_hints": {"model": "SM-S928B", "platform_version": "16.0.0"}}));
-        lib.insert("android-a35".to_string(), json!({"client_hints": {"model": "SM-A356E", "platform_version": "16.0.0"}}));
-        lib.insert("android-a35-2".to_string(), json!({"client_hints": {"model": "SM-A356E", "platform_version": "15.0.0"}}));
+        lib.insert(
+            "android-s24".to_string(),
+            json!({"client_hints": {"model": "SM-S928B", "platform_version": "16.0.0"}}),
+        );
+        lib.insert(
+            "android-a35".to_string(),
+            json!({"client_hints": {"model": "SM-A356E", "platform_version": "16.0.0"}}),
+        );
+        lib.insert(
+            "android-a35-2".to_string(),
+            json!({"client_hints": {"model": "SM-A356E", "platform_version": "15.0.0"}}),
+        );
         let phone = |key: &str, model: &str, ch: &str, nav: Option<&str>| {
             let mut p = json!({"_meta": {"gpu_preset_id": key}, "navigator": {"user_agent": PHONE_UA},
                 "client_hints": {"mobile": true, "model": model, "platform_version": ch}});
@@ -1449,19 +1954,31 @@ mod adopt_tests {
         // The template the profile was made from.
         let mut mac = phone("android-s24", "SM-S928B", "15.7.1", Some("15.7.1"));
         assert!(super::adopt_value(&mut mac, &lib));
-        assert_eq!((mac["client_hints"]["platform_version"].clone(), mac["navigator"]["platform_version"].clone()), (json!("16.0.0"), json!("16.0.0")));
+        assert_eq!(
+            (
+                mac["client_hints"]["platform_version"].clone(),
+                mac["navigator"]["platform_version"].clone()
+            ),
+            (json!("16.0.0"), json!("16.0.0"))
+        );
         assert!(!super::adopt_value(&mut mac, &lib), "once");
         // Its template is gone: one of the same model, the newest when two differ.
         let mut by_model = phone("android-gone", "SM-A356E", "26.1.0", None);
         assert!(super::adopt_value(&mut by_model, &lib));
         assert_eq!(by_model["client_hints"]["platform_version"], "16.0.0");
-        assert!(by_model["navigator"].get("platform_version").is_none(), "no key appears where there was none");
+        assert!(
+            by_model["navigator"].get("platform_version").is_none(),
+            "no key appears where there was none"
+        );
         // Neither: left alone. The user agent says "Android 10" on every Chrome 158 phone.
         // So do an Android release, an empty one (the engine's to fill) and a desktop.
-        for mut keep in [phone("android-gone", "SM-X000", "26.1.0", None), phone("android-s24", "SM-S928B", "13.0.0", Some("6.8.0")),
-                         phone("android-s24", "SM-S928B", "", None),
-                         json!({"_meta": {"gpu_preset_id": "android-s24"}, "navigator": {"platform": "macOS", "user_agent": "Mozilla/5.0 (Macintosh)"},
-                                "client_hints": {"platform_version": "15.7.1"}})] {
+        for mut keep in [
+            phone("android-gone", "SM-X000", "26.1.0", None),
+            phone("android-s24", "SM-S928B", "13.0.0", Some("6.8.0")),
+            phone("android-s24", "SM-S928B", "", None),
+            json!({"_meta": {"gpu_preset_id": "android-s24"}, "navigator": {"platform": "macOS", "user_agent": "Mozilla/5.0 (Macintosh)"},
+                                "client_hints": {"platform_version": "15.7.1"}}),
+        ] {
             let before = keep.clone();
             assert!(!super::adopt_value(&mut keep, &lib));
             assert_eq!(keep, before);
@@ -1472,12 +1989,18 @@ mod adopt_tests {
     #[test]
     fn the_phone_fixes_reach_a_profile_with_no_template() {
         let mut lib = std::collections::HashMap::new();
-        lib.insert("android-a13".to_string(), json!({"client_hints": {"model": "SM-A135F", "platform_version": "14.0.0"}}));
+        lib.insert(
+            "android-a13".to_string(),
+            json!({"client_hints": {"model": "SM-A135F", "platform_version": "14.0.0"}}),
+        );
         let mut p = json!({"name": "imported", "navigator": {"user_agent": PHONE_UA, "platform_version": "26.1.0"},
             "client_hints": {"model": "SM-A135F"}, "webgl": {"vendor": "ARM", "renderer": "Mali-G52"}});
         assert!(super::adopt_value(&mut p, &lib));
         assert_eq!(p["navigator"]["platform_version"], "14.0.0");
-        assert_eq!(p["webgl"]["renderer"], "ANGLE (ARM, Mali-G52, OpenGL ES 3.2)");
+        assert_eq!(
+            p["webgl"]["renderer"],
+            "ANGLE (ARM, Mali-G52, OpenGL ES 3.2)"
+        );
         assert!(!super::adopt_value(&mut p, &lib));
     }
 }
@@ -1496,13 +2019,29 @@ fn migrate_all_to(
 ) -> usize {
     let mut n = 0;
     if let Ok(d) = crate::store::profiles_dir() {
-        n += migrate_dir_to(&d, chromium_version, grease_brand, grease_version, tls, android_version, desktop_versions)
-            .unwrap_or(0);
+        n += migrate_dir_to(
+            &d,
+            chromium_version,
+            grease_brand,
+            grease_version,
+            tls,
+            android_version,
+            desktop_versions,
+        )
+        .unwrap_or(0);
         n += adopt_library_fields(&d).unwrap_or(0);
     }
     if let Ok(d) = crate::store::fingerprints_dir() {
-        n += migrate_dir_to(&d, chromium_version, grease_brand, grease_version, tls, android_version, desktop_versions)
-            .unwrap_or(0);
+        n += migrate_dir_to(
+            &d,
+            chromium_version,
+            grease_brand,
+            grease_version,
+            tls,
+            android_version,
+            desktop_versions,
+        )
+        .unwrap_or(0);
     }
     n
 }
@@ -1510,7 +2049,9 @@ fn migrate_all_to(
 /// A protected profile's config, unlocked for a start, brought to the engine its file could not be
 /// migrated to while sealed. Whether it changed; the caller seals it again.
 pub fn migrate_unlocked(cfg: &mut serde_json::Value) -> bool {
-    let Some(t) = load_manifest().applied_target else { return false };
+    let Some(t) = load_manifest().applied_target else {
+        return false;
+    };
     let moved = migrate_value(
         cfg,
         &t.chromium_version,
@@ -1558,7 +2099,9 @@ fn migration_signature(target: &str, m: &RemoteManifest) -> String {
 /// engine auto-updated via the etag path without an explicit install.
 pub async fn ensure_profiles_migrated() {
     let m = fetch_manifest().await;
-    let Some(target) = m.chromium_version.clone() else { return };
+    let Some(target) = m.chromium_version.clone() else {
+        return;
+    };
     // TLS is part of the signature: without it a manifest that changes only
     // the ClientHello shape would be a no-op for anyone already on this
     // version, and their profiles would keep the previous release's JA4.
@@ -1609,7 +2152,10 @@ fn version_lt(a: &str, b: &str) -> bool {
     };
     let (va, vb) = (part(a), part(b));
     for i in 0..va.len().max(vb.len()) {
-        let (x, y) = (va.get(i).copied().unwrap_or(0), vb.get(i).copied().unwrap_or(0));
+        let (x, y) = (
+            va.get(i).copied().unwrap_or(0),
+            vb.get(i).copied().unwrap_or(0),
+        );
         if x != y {
             return x < y;
         }
@@ -1627,7 +2173,113 @@ fn launcher_version() -> &'static str {
 fn engine_needs_newer_launcher(m: &RemoteManifest) -> bool {
     m.min_launcher_version
         .as_deref()
-        .is_some_and(|min| version_lt(launcher_version(), min))
+        .is_some_and(|min| version_lt(crate::api::DRIVER_PROTOCOL_VERSION, min))
+}
+
+#[cfg(test)]
+mod first_run_download_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn embedded_driver_satisfies_the_current_engine_version_requirement() {
+        let manifest = RemoteManifest {
+            min_launcher_version: Some("2.0.1".into()),
+            ..RemoteManifest::default()
+        };
+
+        assert!(
+            !engine_needs_newer_launcher(&manifest),
+            "the embedded {} driver must satisfy the engine manifest",
+            crate::api::DRIVER_PROTOCOL_VERSION,
+        );
+    }
+
+    #[test]
+    fn an_unreleased_engine_requirement_still_reports_a_version_mismatch() {
+        let manifest = RemoteManifest {
+            min_launcher_version: Some("999.0.0".into()),
+            ..RemoteManifest::default()
+        };
+
+        assert!(engine_needs_newer_launcher(&manifest));
+    }
+
+    #[test]
+    fn downloads_retry_through_the_system_proxy_before_switching_to_direct() {
+        assert_eq!(
+            download_attempts().collect::<Vec<_>>(),
+            [
+                (DownloadRoute::SystemProxy, 1),
+                (DownloadRoute::Direct, 2),
+                (DownloadRoute::Direct, 3),
+                (DownloadRoute::Direct, 4),
+                (DownloadRoute::Direct, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_disk_space_failure_does_not_waste_time_retrying_download_routes() {
+        let failure = anyhow::Error::new(swap::Failure::new(
+            swap::Stage::Space,
+            "not enough free space",
+        ));
+        assert!(!retryable_download(&failure));
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_resumes_its_partial_archive_on_the_direct_route() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/engine.zip", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (response, require_range) in [
+                (
+                    b"HTTP/1.1 200 OK\r\nETag: \"engine-v1\"\r\nContent-Length: 14\r\nConnection: close\r\n\r\nengine ".as_slice(),
+                    false,
+                ),
+                (
+                    b"HTTP/1.1 206 Partial Content\r\nETag: \"engine-v1\"\r\nContent-Range: bytes 7-13/14\r\nContent-Length: 7\r\nConnection: close\r\n\r\narchive".as_slice(),
+                    true,
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 1024];
+                let received = stream.read(&mut request).await.unwrap();
+                if require_range {
+                    let request = String::from_utf8_lossy(&request[..received]).to_ascii_lowercase();
+                    assert!(request.contains("range: bytes=7-"));
+                    assert!(request.contains("if-range: \"engine-v1\""));
+                }
+                stream.write_all(response).await.unwrap();
+            }
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let part = std::env::temp_dir().join(format!(
+            "shardbrowser-runtime-retry-{}.zip",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let room = |_| Ok(());
+        let mut resume_etag = None;
+        let mut downloaded = None;
+
+        for (route, attempt) in download_attempts() {
+            if let Ok(etag) =
+                fetch_attempt(&client, &url, &part, &room, &mut resume_etag, |_, _, _| {}).await
+            {
+                downloaded = Some((route, attempt, etag));
+                break;
+            }
+        }
+
+        assert_eq!(
+            downloaded,
+            Some((DownloadRoute::Direct, 2, "engine-v1".into()))
+        );
+        assert_eq!(tokio::fs::read(&part).await.unwrap(), b"engine archive");
+        tokio::fs::remove_file(part).await.unwrap();
+        server.await.unwrap();
+    }
 }
 
 /// Whether the published engine differs from the one on disk: Chromium version,
@@ -1642,7 +2294,10 @@ fn engine_outdated(local: &Manifest, remote: &RemoteManifest, browser_key: &str)
         (Some(h), Some(w)) => !h.is_empty() && h != w,
         _ => false,
     };
-    let build_moved = differs(installed_engine_build(local), remote.engine_build.as_deref());
+    let build_moved = differs(
+        installed_engine_build(local),
+        remote.engine_build.as_deref(),
+    );
     let hash_moved = differs(
         local.browser_etag.clone(),
         remote.archives.get(browser_key).map(|s| s.as_str()),
@@ -1693,9 +2348,8 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
             .map(|d| {
                 fs::read_dir(&d)
                     .map(|it| {
-                        it.flatten().any(|e| {
-                            e.path().extension().and_then(|s| s.to_str()) == Some("json")
-                        })
+                        it.flatten()
+                            .any(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
                     })
                     .unwrap_or(false)
             })
@@ -1736,9 +2390,9 @@ pub async fn runtime_install(window: Window, force: bool) -> Result<RuntimeStatu
     // Refused rather than installed: this build could not configure it.
     if engine_needs_newer_launcher(&manifest) {
         return Err(format!(
-            "This engine build needs ShardBrowser Launcher {} or newer — you are on {}. Update the launcher first.",
+            "This engine build needs ShardBrowser driver {} or newer — this launcher embeds driver {}. Update the launcher first.",
             manifest.min_launcher_version.as_deref().unwrap_or("?"),
-            launcher_version(),
+            crate::api::DRIVER_PROTOCOL_VERSION,
         ));
     }
 
@@ -1764,7 +2418,9 @@ pub async fn runtime_install(window: Window, force: bool) -> Result<RuntimeStatu
                 match save_manifest(&local) {
                     Ok(()) => swap::settle(&layout),
                     // The journal keeps it for the next start.
-                    Err(e) => eprintln!("[runtime] the engine is in, but its record could not be saved yet: {e}"),
+                    Err(e) => eprintln!(
+                        "[runtime] the engine is in, but its record could not be saved yet: {e}"
+                    ),
                 }
                 clear_install_error();
             }
@@ -1803,11 +2459,19 @@ pub async fn runtime_install(window: Window, force: bool) -> Result<RuntimeStatu
 
     // Fingerprint seed: overwrites bundled templates, leaves user-added files;
     // skipped when the etag matches. User-added FP get version-migrated below.
-    let fp_remote = manifest.archives.get(FINGERPRINTS_ARCHIVE_KEY).map(|s| s.as_str());
-    let fp_etag = install_fingerprints(&window, force, local.fingerprints_etag.as_deref(), fp_remote)
-        .await
-        .map_err(|e| e.to_string())?
-        .or(local.fingerprints_etag.clone());
+    let fp_remote = manifest
+        .archives
+        .get(FINGERPRINTS_ARCHIVE_KEY)
+        .map(|s| s.as_str());
+    let fp_etag = install_fingerprints(
+        &window,
+        force,
+        local.fingerprints_etag.as_deref(),
+        fp_remote,
+    )
+    .await
+    .map_err(|e| e.to_string())?
+    .or(local.fingerprints_etag.clone());
 
     // Migrate already-created profiles AND the fingerprint library (incl.
     // user-added) to the new engine descriptor (UA + client_hints incl. grease).
@@ -1844,7 +2508,10 @@ pub async fn runtime_install(window: Window, force: bool) -> Result<RuntimeStatu
         // Recorded at the swap, never re-read off disk (a leftover
         // `<old>.manifest` once kept the version "stuck"); an engine from
         // before the record adopts the manifest's.
-        installed_chromium_version: local.installed_chromium_version.clone().or(Some(target_ver)),
+        installed_chromium_version: local
+            .installed_chromium_version
+            .clone()
+            .or(Some(target_ver)),
         installed_engine_build: local.installed_engine_build.clone(),
     })
     .map_err(|e| e.to_string())?;
@@ -1869,16 +2536,30 @@ async fn engine_failed(
         running_browsers: f.browsers,
         starting: f.starting,
         engine_kept: kept,
-        target: manifest.archives.get(key).cloned().or_else(|| manifest.chromium_version.clone()),
+        target: manifest
+            .archives
+            .get(key)
+            .cloned()
+            .or_else(|| manifest.chromium_version.clone()),
         at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as u64),
     };
-    eprintln!("[runtime] engine install stopped at {}: {}", err.stage, err.message);
+    eprintln!(
+        "[runtime] engine install stopped at {}: {}",
+        err.stage, err.message
+    );
     save_install_error(&err);
     let etag = manifest.archives.get(key);
-    let update_staged = swap::staged_note(layout).is_some_and(|s| etag.is_none_or(|e| *e == s.etag));
-    let _ = window.emit("runtime:failed", Failed { err: &err, update_staged });
+    let update_staged =
+        swap::staged_note(layout).is_some_and(|s| etag.is_none_or(|e| *e == s.etag));
+    let _ = window.emit(
+        "runtime:failed",
+        Failed {
+            err: &err,
+            update_staged,
+        },
+    );
     if kept {
         runtime_status().await
     } else {
@@ -1891,7 +2572,10 @@ async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, swap::Failure> {
     tokio::task::spawn_blocking(f).await.map_err(|e| {
-        swap::Failure::new(swap::Stage::Extract, format!("The engine install stopped: {e}"))
+        swap::Failure::new(
+            swap::Stage::Extract,
+            format!("The engine install stopped: {e}"),
+        )
     })
 }
 
@@ -1938,7 +2622,12 @@ async fn install_engine(
             let l = layout.clone();
             blocking(move || swap::drop_staging(&l, &swap::Ops::real(&l))).await??;
             let l = layout.clone();
-            let dl = match blocking(move || swap::downloaded(&l)).await.ok().flatten().filter(|d| fits(&d.etag)) {
+            let dl = match blocking(move || swap::downloaded(&l))
+                .await
+                .ok()
+                .flatten()
+                .filter(|d| fits(&d.etag))
+            {
                 Some(d) => d,
                 None => download_engine(window, spec, layout).await?,
             };
@@ -1975,7 +2664,15 @@ async fn download_engine(
     swap::drop_download(layout);
     let ops = swap::Ops::real(layout);
     let room = |total: u64| {
-        let need = total.saturating_mul(1 + swap::UNPACK_GUESS).saturating_add(swap::SPACE_MARGIN);
+        let have = fs::metadata(layout.part())
+            .map(|m| m.len())
+            .unwrap_or(0)
+            .min(total);
+        let download_left = total.saturating_sub(have);
+        let need = total
+            .saturating_mul(swap::UNPACK_GUESS)
+            .saturating_add(download_left)
+            .saturating_add(swap::SPACE_MARGIN);
         swap::room(&ops, &layout.base, need)
     };
     let etag = match fetch(window, spec, &layout.part(), room).await {
@@ -1992,11 +2689,21 @@ async fn download_engine(
         }
     };
     swap::keep_download(layout, &etag).map_err(|e| {
-        swap::Failure::new(swap::Stage::Download, format!("Could not keep the downloaded engine: {e}"))
+        swap::Failure::new(
+            swap::Stage::Download,
+            format!("Could not keep the downloaded engine: {e}"),
+        )
     })
 }
 
-fn progress(window: &Window, spec: &ArchiveSpec, phase: &str, received: u64, total: u64, percent: u64) {
+fn progress(
+    window: &Window,
+    spec: &ArchiveSpec,
+    phase: &str,
+    received: u64,
+    total: u64,
+    percent: u64,
+) {
     let _ = window.emit(
         "runtime:progress",
         serde_json::json!({
@@ -2035,7 +2742,13 @@ async fn install_fingerprints(
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
     let zip = staging.join(format!("{}.part", spec.key));
-    let etag = fetch(window, &spec, &zip, |_| Ok(())).await?;
+    let etag = match fetch(window, &spec, &zip, |_| Ok(())).await {
+        Ok(etag) => etag,
+        Err(err) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(err);
+        }
+    };
     progress(window, &spec, "extract", 0, 0, 100);
     let (z, s) = (zip.clone(), staging.clone());
     tokio::task::spawn_blocking(move || swap::unzip(&z, &s)).await??;
@@ -2057,7 +2770,11 @@ async fn install_fingerprints(
         let dst = dir.join(p.file_name().unwrap());
         let existed = dst.exists();
         fs::copy(&p, &dst)?;
-        if existed { overwritten += 1; } else { added += 1; }
+        if existed {
+            overwritten += 1;
+        } else {
+            added += 1;
+        }
     }
     // A retired bundled template would still be offered for new profiles.
     for (old, _) in RETIRED_TEMPLATES {
@@ -2077,21 +2794,141 @@ async fn fetch(
     room: impl Fn(u64) -> Result<(), swap::Failure>,
 ) -> Result<String> {
     let url = format!("{PUB_BASE}/{}", spec.key);
-    let mut resp = reqwest::Client::new().get(&url).send().await?.error_for_status()?;
-    let total = resp.content_length().unwrap_or(0);
-    if total > 0 {
-        room(total)?;
+    let mut resume_etag: Option<String> = None;
+    for (route, attempt) in download_attempts() {
+        download_progress(window, spec, 0, 0, 0, route, attempt);
+        let result = async {
+            let mut builder = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .read_timeout(DOWNLOAD_READ_TIMEOUT)
+                .timeout(DOWNLOAD_ATTEMPT_TIMEOUT);
+            if route == DownloadRoute::Direct {
+                builder = builder.no_proxy();
+            }
+            let client = builder.build()?;
+            fetch_attempt(
+                &client,
+                &url,
+                part,
+                &room,
+                &mut resume_etag,
+                |received, total, percent| {
+                    download_progress(window, spec, received, total, percent, route, attempt);
+                },
+            )
+            .await
+        }
+        .await;
+        match result {
+            Ok(etag) => return Ok(etag),
+            Err(err) if attempt == DOWNLOAD_ATTEMPT_COUNT || !retryable_download(&err) => {
+                return Err(err);
+            }
+            Err(err) => {
+                eprintln!(
+                    "[runtime] {} download attempt {attempt}/{DOWNLOAD_ATTEMPT_COUNT} failed: {err:#}",
+                    route.name(),
+                );
+                let wait = if download_route(attempt + 1) == route {
+                    std::time::Duration::from_secs(u64::from(attempt.min(3)))
+                } else {
+                    std::time::Duration::ZERO
+                };
+                tokio::time::sleep(wait).await;
+            }
+        }
+    }
+    unreachable!("download attempts always include at least one route")
+}
+
+async fn fetch_attempt(
+    client: &reqwest::Client,
+    url: &str,
+    part: &Path,
+    room: &impl Fn(u64) -> Result<(), swap::Failure>,
+    resume_etag: &mut Option<String>,
+    mut on_progress: impl FnMut(u64, u64, u64),
+) -> Result<String> {
+    let previous_etag = resume_etag.clone();
+    let resume_at = if previous_etag.is_some() {
+        tokio::fs::metadata(part)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let mut request = client.get(url);
+    if resume_at > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume_at}-"));
+        if let Some(etag) = previous_etag.as_deref() {
+            request = request.header(reqwest::header::IF_RANGE, format!("\"{etag}\""));
+        }
+    }
+
+    let mut resp = request.send().await?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        reset_partial(part, resume_etag).await;
+        anyhow::bail!("the partial browser archive no longer fits the server version");
+    }
+    if !status.is_success() {
+        return Err(resp.error_for_status().unwrap_err().into());
     }
     let etag = resp
         .headers()
         .get("etag")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim_matches('"').to_string())
-        .unwrap_or_default();
+        .filter(|s| !s.is_empty());
 
-    let mut out = tokio::fs::File::create(part).await?;
-    let mut received: u64 = 0;
+    let (mut received, total) = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+        let range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_content_range);
+        let Some((start, end, total)) = range else {
+            reset_partial(part, resume_etag).await;
+            anyhow::bail!("the server returned an invalid range for the partial archive");
+        };
+        let remaining = end.saturating_sub(start).saturating_add(1);
+        if start != resume_at
+            || end < start
+            || total <= end
+            || previous_etag.as_deref() != etag.as_deref()
+            || resp.content_length().is_some_and(|size| size != remaining)
+        {
+            reset_partial(part, resume_etag).await;
+            anyhow::bail!("the resumed browser download did not match the saved partial archive");
+        }
+        if let Err(err) = room(total) {
+            return Err(err.into());
+        }
+        *resume_etag = etag.clone();
+        (start, total)
+    } else {
+        let total = resp.content_length().unwrap_or(0);
+        if total > 0 {
+            room(total)?;
+        }
+        *resume_etag = etag.clone();
+        (0, total)
+    };
+
+    let mut out = if received > 0 {
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .await?
+    } else {
+        tokio::fs::File::create(part).await?
+    };
     let mut last_pct: u64 = u64::MAX;
+    if received > 0 {
+        last_pct = received * 100 / total;
+        on_progress(received, total, last_pct);
+    }
     while let Some(chunk) = resp.chunk().await? {
         out.write_all(&chunk).await?;
         received += chunk.len() as u64;
@@ -2099,7 +2936,7 @@ async fn fetch(
         let pct = if total > 0 { received * 100 / total } else { 0 };
         if pct != last_pct {
             last_pct = pct;
-            progress(window, spec, "download", received, total, pct);
+            on_progress(received, total, pct);
         }
     }
     out.flush().await?;
@@ -2108,7 +2945,57 @@ async fn fetch(
     if total > 0 && received != total {
         anyhow::bail!("the download stopped at {received} of {total} bytes");
     }
-    Ok(etag)
+    Ok(etag.unwrap_or_default())
+}
+
+fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
+    let range = value.strip_prefix("bytes ")?;
+    let (bounds, total) = range.split_once('/')?;
+    let (start, end) = bounds.split_once('-')?;
+    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+}
+
+async fn reset_partial(part: &Path, resume_etag: &mut Option<String>) {
+    let _ = tokio::fs::remove_file(part).await;
+    *resume_etag = None;
+}
+
+impl DownloadRoute {
+    fn name(self) -> &'static str {
+        match self {
+            Self::SystemProxy => "system_proxy",
+            Self::Direct => "direct",
+        }
+    }
+}
+
+fn retryable_download(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<swap::Failure>()
+        .is_none_or(|failure| failure.stage == swap::Stage::Download)
+}
+
+fn download_progress(
+    window: &Window,
+    spec: &ArchiveSpec,
+    received: u64,
+    total: u64,
+    percent: u64,
+    route: DownloadRoute,
+    attempt: u8,
+) {
+    let _ = window.emit(
+        "runtime:progress",
+        serde_json::json!({
+            "label": spec.label,
+            "phase": "download",
+            "received": received,
+            "total": total,
+            "percent": percent,
+            "route": route.name(),
+            "attempt": attempt,
+            "max_attempts": DOWNLOAD_ATTEMPT_COUNT,
+        }),
+    );
 }
 
 /// First-4-bytes magic check; matches ELF + every Mach-O flavour.
@@ -2117,23 +3004,41 @@ fn fix_unix_exec_bits(root: &Path) {
     use std::io::Read;
     use std::os::unix::fs::PermissionsExt;
     const MAGIC: &[[u8; 4]] = &[
-        [0x7f, b'E', b'L', b'F'],                              // ELF
-        [0xfe, 0xed, 0xfa, 0xcf], [0xcf, 0xfa, 0xed, 0xfe],   // Mach-O 64 BE/LE
-        [0xfe, 0xed, 0xfa, 0xce], [0xce, 0xfa, 0xed, 0xfe],   // Mach-O 32 BE/LE
-        [0xca, 0xfe, 0xba, 0xbe], [0xbe, 0xba, 0xfe, 0xca],   // Mach-O universal
+        [0x7f, b'E', b'L', b'F'], // ELF
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xcf, 0xfa, 0xed, 0xfe], // Mach-O 64 BE/LE
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xce, 0xfa, 0xed, 0xfe], // Mach-O 32 BE/LE
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca], // Mach-O universal
     ];
     fn walk(dir: &Path, magic: &[[u8; 4]]) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for ent in entries.flatten() {
             let p = ent.path();
             let Ok(ft) = ent.file_type() else { continue };
-            if ft.is_symlink() { continue; }
-            if ft.is_dir() { walk(&p, magic); continue; }
-            if !ft.is_file() { continue; }
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                walk(&p, magic);
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
             let mut head = [0u8; 4];
-            let Ok(mut f) = fs::File::open(&p) else { continue };
-            if f.read_exact(&mut head).is_err() { continue; }
-            if !magic.iter().any(|m| *m == head) { continue; }
+            let Ok(mut f) = fs::File::open(&p) else {
+                continue;
+            };
+            if f.read_exact(&mut head).is_err() {
+                continue;
+            }
+            if !magic.iter().any(|m| *m == head) {
+                continue;
+            }
             if let Ok(meta) = fs::metadata(&p) {
                 let mut perm = meta.permissions();
                 perm.set_mode(perm.mode() | 0o111);
@@ -2167,10 +3072,14 @@ fn is_newer(latest: &str, current: &str) -> bool {
         let y = b.get(i).copied().unwrap_or("0");
         match (x.parse::<u64>(), y.parse::<u64>()) {
             (Ok(xn), Ok(yn)) => {
-                if xn != yn { return xn > yn; }
+                if xn != yn {
+                    return xn > yn;
+                }
             }
             _ => {
-                if x != y { return x > y; }
+                if x != y {
+                    return x > y;
+                }
             }
         }
     }
@@ -2184,12 +3093,19 @@ pub async fn launcher_update_check(app: tauri::AppHandle) -> Result<LauncherVers
     let url = format!("https://api.github.com/repos/{LAUNCHER_RELEASE_REPO}/releases/latest");
     let client = match reqwest::Client::builder()
         .user_agent(format!("shardx-launcher/{current}"))
+        .no_proxy()
         .build()
     {
         Ok(c) => c,
-        Err(e) => return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
-        }).map_err(|_: String| e.to_string()),
+        Err(e) => {
+            return Ok(LauncherVersionInfo {
+                current,
+                latest: None,
+                update_available: false,
+                release_url: None,
+            })
+            .map_err(|_: String| e.to_string())
+        }
     };
 
     let resp = client
@@ -2199,26 +3115,48 @@ pub async fn launcher_update_check(app: tauri::AppHandle) -> Result<LauncherVers
         .await;
     let Ok(resp) = resp else {
         return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
+            current,
+            latest: None,
+            update_available: false,
+            release_url: None,
         });
     };
     if !resp.status().is_success() {
         // 404/403 etc → report unknown rather than scare the user.
         return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
+            current,
+            latest: None,
+            update_available: false,
+            release_url: None,
         });
     }
     let body: serde_json::Value = match resp.json().await {
         Ok(v) => v,
-        Err(_) => return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
-        }),
+        Err(_) => {
+            return Ok(LauncherVersionInfo {
+                current,
+                latest: None,
+                update_available: false,
+                release_url: None,
+            })
+        }
     };
-    let latest = body.get("tag_name").and_then(|v| v.as_str()).map(String::from);
-    let release_url = body.get("html_url").and_then(|v| v.as_str()).map(String::from);
+    let latest = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let release_url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let update_available = match &latest {
         Some(l) => is_newer(l, &current),
         None => false,
     };
-    Ok(LauncherVersionInfo { current, latest, update_available, release_url })
+    Ok(LauncherVersionInfo {
+        current,
+        latest,
+        update_available,
+        release_url,
+    })
 }

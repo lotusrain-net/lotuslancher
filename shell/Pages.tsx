@@ -7,7 +7,7 @@ import { Brand, onDragArea, WindowButtons } from "./TitleBar";
 type Action = { label: string; run: () => void; secondary?: boolean };
 type Spec = { spinner?: boolean; title: string; text: string; progress?: boolean; actions?: Action[] };
 
-function spec(s: Snapshot, openSettings: () => void): Spec {
+function spec(s: Snapshot, openSettings: () => void, downloadProgress: Progress): Spec {
   const settings: Action = { label: "打开设置", run: openSettings, secondary: true };
   if (s.agent_health === "offline") {
     return {
@@ -21,10 +21,13 @@ function spec(s: Snapshot, openSettings: () => void): Spec {
     case "init": {
       const failed = !!s.engine_error;
       const installing = s.engine_installing;
+      const downloadStatus = downloadProgress?.route
+        ? `正在通过${downloadProgress.route === "system_proxy" ? "系统代理" : "直连网络"}下载浏览器组件（第 ${downloadProgress.attempt ?? 1}/${downloadProgress.max_attempts ?? 5} 次）…`
+        : "下载完成后会自动进入，不需要任何操作。";
       return {
         spinner: installing,
         title: "首次使用，正在准备浏览器组件",
-        text: failed ? "组件下载失败，请检查网络后重试。" : installing ? "下载完成后会自动进入，不需要任何操作。" : "组件已就绪，正在进入…",
+        text: failed ? "组件下载失败，请检查网络后重试。" : installing ? downloadStatus : "组件已就绪，正在进入…",
         progress: installing,
         actions: failed ? [{ label: "换个线路重试", run: () => void act("driver_retry", s) }, settings] : [settings],
       };
@@ -78,7 +81,7 @@ export function Page({ snap, progress, refresh }: { snap: Snapshot; progress: Pr
   const canSettings = snap.screen !== "quitting";
   const open = settingsOpen && canSettings;
   const { mounted, shown } = usePresence(open, 160);
-  const sp = spec(snap, () => setSettingsOpen(true));
+  const sp = spec(snap, () => setSettingsOpen(true), progress);
 
   useEvent("shell://open-settings", () => setSettingsOpen(true));
   useEffect(() => {

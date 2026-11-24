@@ -43,7 +43,8 @@ pub fn resolve_binary() -> Result<PathBuf> {
 }
 
 /// Why a launch is refused while the data lock (migrate.rs) is held.
-pub const LOCKED: &str = "ShardBrowser is moving or resetting its data. Try again when that finishes.";
+pub const LOCKED: &str =
+    "ShardBrowser is moving or resetting its data. Try again when that finishes.";
 /// Why a launch that was under way stops short of starting the browser.
 pub const CANCELLED: &str = "launch cancelled: ShardBrowser is moving or resetting its data.";
 
@@ -157,7 +158,10 @@ impl Starting {
 
 impl Drop for Starting {
     fn drop(&mut self) {
-        STARTING.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| *p != self.0);
+        STARTING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|p| *p != self.0);
     }
 }
 
@@ -178,8 +182,16 @@ fn fill_window_from_screen(
     if w <= 0 || h <= 0 {
         return None;
     }
-    let avail_w = scr.get("avail_width").and_then(|v| v.as_i64()).unwrap_or(w).max(1);
-    let avail_h = scr.get("avail_height").and_then(|v| v.as_i64()).unwrap_or(h).max(1);
+    let avail_w = scr
+        .get("avail_width")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(w)
+        .max(1);
+    let avail_h = scr
+        .get("avail_height")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(h)
+        .max(1);
 
     // Only when it is missing or says nothing: a profile that names its own
     // window was captured that way and is left exactly as it is.
@@ -200,7 +212,10 @@ fn fill_window_from_screen(
     win.insert("outer_width".into(), serde_json::Value::from(avail_w));
     win.insert("outer_height".into(), serde_json::Value::from(outer_h));
     win.insert("inner_width".into(), serde_json::Value::from(avail_w));
-    win.insert("inner_height".into(), serde_json::Value::from((outer_h - 87).max(1)));
+    win.insert(
+        "inner_height".into(),
+        serde_json::Value::from((outer_h - 87).max(1)),
+    );
     let win = serde_json::Value::Object(win);
     raw.insert("window".into(), win.clone());
     eprintln!(
@@ -231,14 +246,19 @@ pub fn claim_host_screen(
     raw: &mut serde_json::Map<String, serde_json::Value>,
     host: Option<HostScreen>,
 ) -> bool {
-    let Some((w, h, dpr)) = host.filter(|&(w, h, _)| w > 0 && h > 0) else { return false };
+    let Some((w, h, dpr)) = host.filter(|&(w, h, _)| w > 0 && h > 0) else {
+        return false;
+    };
     let meta = raw.get("_meta");
     let by_hand = meta
         .and_then(|m| m.get("screen_custom"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     // Changing a live profile's screen would change its fingerprint.
-    let exists = meta.and_then(|m| m.get("id")).and_then(|v| v.as_str()).is_some_and(|id| !id.is_empty());
+    let exists = meta
+        .and_then(|m| m.get("id"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| !id.is_empty());
     if exists {
         return false;
     }
@@ -253,7 +273,9 @@ pub fn claim_host_screen(
     if by_hand || !desktop || profile::claims_mobile(raw) {
         return false;
     }
-    let Some(scr) = raw.get_mut("screen").and_then(|v| v.as_object_mut()) else { return false };
+    let Some(scr) = raw.get_mut("screen").and_then(|v| v.as_object_mut()) else {
+        return false;
+    };
     let n = |k: &str| scr.get(k).and_then(|v| v.as_i64());
     let (fw, fh) = (n("width").unwrap_or(0), n("height").unwrap_or(0));
     if fw <= 0 || fh <= 0 {
@@ -304,14 +326,19 @@ pub struct LaunchInput {
 }
 
 /// Gathers what starting this profile needs from the space it lives in.
-pub fn launch_input(start: &Granted<Start>, cdp: Option<&Granted<Cookies>>, password: Option<&str>) -> Result<LaunchInput> {
+pub fn launch_input(
+    start: &Granted<Start>,
+    cdp: Option<&Granted<Cookies>>,
+    password: Option<&str>,
+) -> Result<LaunchInput> {
     let profile_id = start.profile_id();
     if cdp.is_some_and(|c| c.profile_id() != profile_id) {
         anyhow::bail!("the debugging pass was given for another profile");
     }
     // A protected profile is opened for this start only, and sealed again when its browser closes.
     let (stored, udd, sealed) = if profile::is_protected(profile_id) {
-        let pw = password.ok_or_else(|| anyhow::anyhow!(crate::space::profile::PASSWORD_REQUIRED))?;
+        let pw =
+            password.ok_or_else(|| anyhow::anyhow!(crate::space::profile::PASSWORD_REQUIRED))?;
         let (mut full, udd, open) = profile::open_protected(profile_id, pw)?;
         // Its file was skipped while the engine moved on: migrated now, and sealed again.
         let mut value = serde_json::to_value(&full)?;
@@ -323,7 +350,11 @@ pub fn launch_input(start: &Granted<Start>, cdp: Option<&Granted<Cookies>>, pass
         }
         (full, udd, Some(open))
     } else {
-        (profile::load_raw(profile_id)?, profile::user_data_dir(profile_id)?, None)
+        (
+            profile::load_raw(profile_id)?,
+            profile::user_data_dir(profile_id)?,
+            None,
+        )
     };
 
     // A browser left over from an earlier run of the launcher holds the
@@ -378,7 +409,12 @@ fn bound_proxy(
     profile_id: &str,
     get: impl FnOnce(&str) -> Result<Option<proxy::ProxyEntry>>,
 ) -> Result<Option<proxy::ProxyEntry>> {
-    let Some(id) = stored.meta.proxy_id.as_deref().filter(|id| !id.trim().is_empty()) else {
+    let Some(id) = stored
+        .meta
+        .proxy_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+    else {
         return Ok(stored.meta.inline_proxy.clone());
     };
     // The cause goes in the message: the UI shows only its outermost line.
@@ -446,13 +482,25 @@ pub async fn launch_for_run(
     bus_port: u16,
     bus_token: &str,
 ) -> Result<LaunchOutcome> {
-    let opts = LaunchOpts { enable_cdp: true, headless: false, sync_group: None, bus_port, bus_token, space: Some(space), password: None };
+    let opts = LaunchOpts {
+        enable_cdp: true,
+        headless: false,
+        sync_group: None,
+        bus_port,
+        bus_token,
+        space: Some(space),
+        password: None,
+    };
     launch_using(resolve_binary, profile_id, &opts).await
 }
 
 /// Tests' own start: no bus, no password.
 #[cfg(test)]
-pub async fn launch_profile(profile_id: &str, enable_cdp: bool, headless: bool) -> Result<LaunchOutcome> {
+pub async fn launch_profile(
+    profile_id: &str,
+    enable_cdp: bool,
+    headless: bool,
+) -> Result<LaunchOutcome> {
     launch_profile_synced(profile_id, enable_cdp, headless, None, 0, "").await
 }
 
@@ -465,7 +513,15 @@ pub async fn launch_profile_unlocked(
     bus_token: &str,
     password: Option<&str>,
 ) -> Result<LaunchOutcome> {
-    let opts = LaunchOpts { enable_cdp, headless, sync_group: None, bus_port, bus_token, space: None, password };
+    let opts = LaunchOpts {
+        enable_cdp,
+        headless,
+        sync_group: None,
+        bus_port,
+        bus_token,
+        space: None,
+        password,
+    };
     launch_using(resolve_binary, profile_id, &opts).await
 }
 
@@ -479,7 +535,15 @@ pub async fn launch_profile_synced(
     bus_port: u16,
     bus_token: &str,
 ) -> Result<LaunchOutcome> {
-    let opts = LaunchOpts { enable_cdp, headless, sync_group, bus_port, bus_token, space: None, password: None };
+    let opts = LaunchOpts {
+        enable_cdp,
+        headless,
+        sync_group,
+        bus_port,
+        bus_token,
+        space: None,
+        password: None,
+    };
     launch_using(resolve_binary, profile_id, &opts).await
 }
 
@@ -523,7 +587,8 @@ async fn launch_using(
         Some(team) => {
             // Just after the launcher started its lists may not be read yet: a start from any door waits for them.
             crate::space::ready().await;
-            let (start, cookies) = crate::space::open::passes(&team, profile_id, opts.enable_cdp).await?;
+            let (start, cookies) =
+                crate::space::open::passes(&team, profile_id, opts.enable_cdp).await?;
             let bin = binary()?;
             // Asked of the server: a lock or a cancel that came meanwhile stops it here.
             may_spawn(profile_id)?;
@@ -531,7 +596,11 @@ async fn launch_using(
         }
         None => {
             let start = perm::start(profile_id)?;
-            let cookies = if opts.enable_cdp { Some(perm::cookies(profile_id)?) } else { None };
+            let cookies = if opts.enable_cdp {
+                Some(perm::cookies(profile_id)?)
+            } else {
+                None
+            };
             let bin = binary()?;
             // An extension swap is waited out; none starts until the browser is tracked.
             _held = Some(extensions::begin_launch(profile_id).await?);
@@ -539,7 +608,10 @@ async fn launch_using(
             // Synced: under the lease of the person's space, its session brought up to date.
             // A protected profile is never synced: its data leaves this machine only sealed.
             if !matches!(input.exit, ExitHook::Sealed(_)) {
-                if let Some(hand) = crate::space::sync::open_for_start(profile_id, &input.udd, opts.enable_cdp).await? {
+                if let Some(hand) =
+                    crate::space::sync::open_for_start(profile_id, &input.udd, opts.enable_cdp)
+                        .await?
+                {
                     input.exit = ExitHook::Synced(hand);
                     may_spawn(profile_id)?;
                 }
@@ -553,14 +625,30 @@ async fn launch_using(
 /// A team profile: its session downloaded under a lease into a folder of its
 /// own, the proxy the server sent with it, and the team's extensions and
 /// bookmarks, never this machine's.
-async fn team_input(team: &str, start: &Granted<Start>, cdp: Option<&Granted<Cookies>>) -> Result<LaunchInput> {
+async fn team_input(
+    team: &str,
+    start: &Granted<Start>,
+    cdp: Option<&Granted<Cookies>>,
+) -> Result<LaunchInput> {
     if cdp.is_some_and(|c| c.profile_id() != start.profile_id()) {
         anyhow::bail!("the debugging pass was given for another profile");
     }
     let opened = crate::space::open::open_team(team, start, cdp.is_some()).await?;
     let id = start.profile_id();
-    let name = opened.stored.config.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).unwrap_or(id);
-    let extensions = extensions::unpack_for_team(team, (id, name), &opened.stored.meta.extensions, &opened.ext).await;
+    let name = opened
+        .stored
+        .config
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or(id);
+    let extensions = extensions::unpack_for_team(
+        team,
+        (id, name),
+        &opened.stored.meta.extensions,
+        &opened.ext,
+    )
+    .await;
     Ok(LaunchInput {
         profile_id: start.profile_id().to_string(),
         stored: opened.stored,
@@ -579,8 +667,20 @@ async fn team_input(team: &str, start: &Granted<Start>, cdp: Option<&Granted<Coo
 
 /// A launch with an engine of the test's own.
 #[cfg(test)]
-pub(crate) async fn launch_with(engine: PathBuf, profile_id: &str, enable_cdp: bool) -> Result<LaunchOutcome> {
-    let opts = LaunchOpts { enable_cdp, headless: false, sync_group: None, bus_port: 0, bus_token: "", space: None, password: None };
+pub(crate) async fn launch_with(
+    engine: PathBuf,
+    profile_id: &str,
+    enable_cdp: bool,
+) -> Result<LaunchOutcome> {
+    let opts = LaunchOpts {
+        enable_cdp,
+        headless: false,
+        sync_group: None,
+        bus_port: 0,
+        bus_token: "",
+        space: None,
+        password: None,
+    };
     launch_using(|| Ok(engine), profile_id, &opts).await
 }
 
@@ -601,7 +701,11 @@ struct Ready<'a> {
     change_ip: bool,
 }
 
-async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) -> Result<LaunchOutcome> {
+async fn start_browser(
+    bin: &Path,
+    input: LaunchInput,
+    opts: &LaunchOpts<'_>,
+) -> Result<LaunchOutcome> {
     // Read off the engine binary while the proxy is probed; once per engine version.
     let ext_alone = (!input.extensions.is_empty() || input.library.is_some()).then(|| {
         let bin = bin.to_path_buf();
@@ -689,7 +793,9 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
         // already has its window.
         if input.exit.is_local() && !crate::migrate::in_progress() {
             match profile::fill_missing_window(&input.profile_id, win) {
-                Ok(true) => eprintln!("[launcher] display: wrote the window block into the profile"),
+                Ok(true) => {
+                    eprintln!("[launcher] display: wrote the window block into the profile")
+                }
                 Ok(false) => {}
                 Err(e) => eprintln!("[launcher] display: could not store the window block: {e}"),
             }
@@ -725,7 +831,12 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
     }
 
     // Per-profile window icon. A failure here is cosmetic, never fatal.
-    let color = input.stored.meta.color.clone().filter(|c| !c.trim().is_empty());
+    let color = input
+        .stored
+        .meta
+        .color
+        .clone()
+        .filter(|c| !c.trim().is_empty());
     // Tests do not draw into the real runtime folder.
     let icon = match crate::runtime::runtime_dir().and_then(|dir| {
         if cfg!(test) {
@@ -750,7 +861,8 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
 
     // Folder bookmarks, written before the browser reads the file: the space's
     // own, so this machine's are never written into a team's profile.
-    let bookmarked = bookmarks::apply_to_profile(&input.udd, &input.stored.meta.folder, &input.bookmarks);
+    let bookmarked =
+        bookmarks::apply_to_profile(&input.udd, &input.stored.meta.folder, &input.bookmarks);
     match bookmarked {
         Ok(n) if n > 0 => eprintln!("[launcher] {n} folder bookmark(s) applied"),
         Ok(_) => {}
@@ -773,7 +885,9 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
         None => false,
     };
 
-    let change_ip = (opts.bus_port != 0).then(|| change_ip_link(&input)).flatten();
+    let change_ip = (opts.bus_port != 0)
+        .then(|| change_ip_link(&input))
+        .flatten();
     let args = command_line(
         &input,
         &Ready {
@@ -794,7 +908,14 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
         Some(proxy_id) => remember_change_ip(&input.profile_id, proxy_id),
         None => forget_change_ip(&input.profile_id),
     }
-    let LaunchInput { profile_id, udd, exit, cdp: enable_cdp, ext_ids, .. } = input;
+    let LaunchInput {
+        profile_id,
+        udd,
+        exit,
+        cdp: enable_cdp,
+        ext_ids,
+        ..
+    } = input;
     let remote = exit.session();
     // A team's profile has no launch count of its own here.
     let touch = !matches!(exit, ExitHook::Remote(_));
@@ -820,8 +941,13 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
     // A profile kept on a server ends with the launcher where the OS allows;
     // its reaper (started when it was opened) closes it everywhere.
     let (child, tie) = match &remote {
-        Some(_) => process::spawn_tied(cmd).await.context("start the ShardBrowser engine")?,
-        None => (cmd.spawn().context("start the ShardBrowser engine")?, process::Tie::default()),
+        Some(_) => process::spawn_tied(cmd)
+            .await
+            .context("start the ShardBrowser engine")?,
+        None => (
+            cmd.spawn().context("start the ShardBrowser engine")?,
+            process::Tie::default(),
+        ),
     };
     let pid = Tracker::shared().track(profile_id.clone(), child, udd.clone(), exit, ext_ids);
 
@@ -836,7 +962,10 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
     let cdp = if enable_cdp {
         match read_devtools_endpoint(&udd).await {
             Some(c) => {
-                eprintln!("[launcher] CDP ready for {profile_id}: {}", c.web_socket_debugger_url);
+                eprintln!(
+                    "[launcher] CDP ready for {profile_id}: {}",
+                    c.web_socket_debugger_url
+                );
                 Tracker::shared().set_cdp(&profile_id, c.clone());
                 Some(c)
             }
@@ -856,7 +985,11 @@ async fn start_browser(bin: &Path, input: LaunchInput, opts: &LaunchOpts<'_>) ->
         None
     };
 
-    Ok(LaunchOutcome { pid, cdp, cdp_error })
+    Ok(LaunchOutcome {
+        pid,
+        cdp,
+        cdp_error,
+    })
 }
 
 /// The profile as the engine reads it, without `_meta`. `ui_language` goes only as the
@@ -873,7 +1006,11 @@ fn engine_config(stored: &profile::StoredProfile) -> serde_json::Map<String, ser
 /// The engine's command line, in the order the switches have always gone.
 /// The proxy a launch runs on, when it has a change-IP link (#162).
 fn change_ip_link(input: &LaunchInput) -> Option<String> {
-    input.proxy.as_ref().filter(|p| proxy::rotation_get(&p.id).is_some()).map(|p| p.id.clone())
+    input
+        .proxy
+        .as_ref()
+        .filter(|p| proxy::rotation_get(&p.id).is_some())
+        .map(|p| p.id.clone())
 }
 
 /// The proxy each running profile was started on, with the space's edition then: what its
@@ -884,7 +1021,8 @@ static CHANGE_IP: std::sync::Mutex<Option<std::collections::HashMap<String, (Str
 fn remember_change_ip(profile_id: &str, proxy_id: String) {
     let epoch = crate::space::Ticket::now().epoch();
     let mut g = CHANGE_IP.lock().unwrap();
-    g.get_or_insert_with(Default::default).insert(profile_id.to_string(), (proxy_id, epoch));
+    g.get_or_insert_with(Default::default)
+        .insert(profile_id.to_string(), (proxy_id, epoch));
 }
 
 fn forget_change_ip(profile_id: &str) {
@@ -897,23 +1035,34 @@ fn forget_change_ip(profile_id: &str) {
 /// change the proxy's Change IP button makes, with its permission, then the browser is told
 /// to drop its open connections so the next request leaves through the new IP.
 pub async fn change_ip_from_browser(profile_id: &str) -> serde_json::Value {
-    let target = CHANGE_IP.lock().unwrap().as_ref().and_then(|m| m.get(profile_id).cloned());
+    let target = CHANGE_IP
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(profile_id).cloned());
     let outcome: Result<String> = async {
-        let (proxy_id, epoch) =
-            target.ok_or_else(|| anyhow::anyhow!("this profile was not started on a proxy with a Change IP link"))?;
+        let (proxy_id, epoch) = target.ok_or_else(|| {
+            anyhow::anyhow!("this profile was not started on a proxy with a Change IP link")
+        })?;
         let t = crate::space::ticket(Some(epoch)).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let out = proxy::change_ip(crate::space::Door("proxy_change_ip"), &t, &proxy_id).await?;
         crate::notify_store_changed("proxies");
         match (out.changed, out.after) {
             (true, Some(after)) => Ok(after.ip),
-            (_, Some(after)) => anyhow::bail!("the provider answered, but the IP is still {}", after.ip),
+            (_, Some(after)) => {
+                anyhow::bail!("the provider answered, but the IP is still {}", after.ip)
+            }
             (_, None) => anyhow::bail!("the provider answered, but the new IP could not be read"),
         }
     }
     .await;
     match outcome {
-        Ok(ip) => serde_json::json!({ "reconnect": true, "change_ip_result": { "ok": true, "ip": ip } }),
-        Err(e) => serde_json::json!({ "change_ip_result": { "ok": false, "error": format!("{e:#}") } }),
+        Ok(ip) => {
+            serde_json::json!({ "reconnect": true, "change_ip_result": { "ok": true, "ip": ip } })
+        }
+        Err(e) => {
+            serde_json::json!({ "change_ip_result": { "ok": false, "error": format!("{e:#}") } })
+        }
     }
 }
 
@@ -934,7 +1083,13 @@ fn command_line(
     // about a profile's colour; left off for "auto", which keeps the toolbar colour.
     if !s.show_profile_name {
         args.push("--shardx-hide-profile-name".into());
-    } else if let Some(c) = input.stored.meta.color.as_deref().filter(|c| !c.trim().is_empty()) {
+    } else if let Some(c) = input
+        .stored
+        .meta
+        .color
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+    {
         args.push(format!("--shardx-profile-pill-color={c}"));
     }
     args.push("--no-first-run".into());
@@ -960,7 +1115,11 @@ fn command_line(
     }
 
     // Disable WebGPU when profile omits `webgpu` (matches real Linux Chrome).
-    let webgpu_present = ready.raw.get("webgpu").map(|v| !v.is_null()).unwrap_or(false);
+    let webgpu_present = ready
+        .raw
+        .get("webgpu")
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
     if !webgpu_present {
         args.push("--disable-features=WebGPU".into());
     }
@@ -983,12 +1142,19 @@ fn command_line(
             );
         } else {
             args.push("--disable-quic".into());
-            eprintln!("[launcher] QUIC disabled: proxy {} has no working UDP relay", p.host);
+            eprintln!(
+                "[launcher] QUIC disabled: proxy {} has no working UDP relay",
+                p.host
+            );
         }
     }
 
     // WebRTC IP policy: block / tcp_only / auto (auto = relay if UDP, else tcp_only).
-    let webrtc_mode = ready.raw.get("webrtc").and_then(|v| v.as_str()).unwrap_or("auto");
+    let webrtc_mode = ready
+        .raw
+        .get("webrtc")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     match webrtc_mode {
         "block" => {
             args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp".into());
@@ -1054,7 +1220,12 @@ fn command_line(
     // on has the provider's link. The browser asks over the bus; the launcher does the change.
     if ready.change_ip {
         args.push("--shardx-change-ip".into());
-        if let Some(key) = s.change_ip_hotkey.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+        if let Some(key) = s
+            .change_ip_hotkey
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+        {
             args.push(format!("--shardx-change-ip-key={key}"));
         }
     }
@@ -1072,7 +1243,11 @@ fn command_line(
     }
 
     let extra = settings::parse_extra_args(&s.extra_args);
-    let extra = if input.team { team_extra_args(extra) } else { extra };
+    let extra = if input.team {
+        team_extra_args(extra)
+    } else {
+        extra
+    };
 
     // Pin X11 (XWayland under Wayland): a Wayland client may not place its own windows,
     // so SetBounds moves nothing. Not without DISPLAY — forcing x11 then opens no window.
@@ -1107,10 +1282,7 @@ async fn read_devtools_endpoint(udd: &Path) -> Option<process::CdpInfo> {
                     return Some(process::CdpInfo {
                         port,
                         http_url: format!("http://127.0.0.1:{port}"),
-                        web_socket_debugger_url: format!(
-                            "ws://127.0.0.1:{port}{}",
-                            path.trim()
-                        ),
+                        web_socket_debugger_url: format!("ws://127.0.0.1:{port}{}", path.trim()),
                     });
                 }
             }
@@ -1132,7 +1304,9 @@ async fn resolve_auto_fields(
         .and_then(|v| v.as_str())
         == Some("auto");
     let want_geo_auto = matches!(
-        cfg.get("geolocation").and_then(|g| g.get("mode")).and_then(|v| v.as_str()),
+        cfg.get("geolocation")
+            .and_then(|g| g.get("mode"))
+            .and_then(|v| v.as_str()),
         Some("auto")
     );
 
@@ -1145,63 +1319,73 @@ async fn resolve_auto_fields(
         want_tz_auto,
         want_lang_auto,
         want_geo_auto,
-        proxy_opt.map(|p| format!("{}:{}", p.host, p.port)).unwrap_or_else(|| "(direct)".into()),
+        proxy_opt
+            .map(|p| format!("{}:{}", p.host, p.port))
+            .unwrap_or_else(|| "(direct)".into()),
     );
 
     // ---- geo source ----
     let mut source = "";
     let geo: Option<proxy::GeoInfo> = match proxy_opt {
-        Some(p) => {
-            match proxy::geo_check_via(Some(p), None).await {
-                Ok(g) => { source = "proxy-live"; Some(g) }
-                Err(e) => {
-                    eprintln!("[launcher] proxy geo failed: {e} — falling back to cached snapshot");
-                    if let Some(snap) = proxy::latest_test(&p.id) {
-                        if !snap.country_code.is_empty() || !snap.timezone.is_empty() {
-                            source = "cached-snapshot";
-                            Some(proxy::GeoInfo {
-                                ip: snap.ip,
-                                country: snap.country,
-                                country_code: snap.country_code,
-                                region: snap.region,
-                                city: snap.city,
-                                isp: snap.isp,
-                                timezone: snap.timezone,
-                                latitude: snap.latitude,
-                                longitude: snap.longitude,
-                                provider: snap.provider,
-                            })
-                        } else { None }
-                    } else { None }
-                    .or_else(|| {
-                        if !p.country.is_empty() {
-                            source = "country-tag";
-                            Some(proxy::GeoInfo {
-                                ip: String::new(),
-                                country: String::new(),
-                                country_code: p.country.clone(),
-                                region: String::new(),
-                                city: String::new(),
-                                isp: String::new(),
-                                timezone: String::new(),
-                                latitude: 0.0,
-                                longitude: 0.0,
-                                provider: String::new(),
-                            })
-                        } else { None }
-                    })
-                }
+        Some(p) => match proxy::geo_check_via(Some(p), None).await {
+            Ok(g) => {
+                source = "proxy-live";
+                Some(g)
             }
-        }
-        None => {
-            match proxy::geo_check_via(None, None).await {
-                Ok(g) => { source = "direct-live"; Some(g) }
-                Err(e) => {
-                    eprintln!("[launcher] direct geo failed: {e} — falling back to host TZ/locale");
+            Err(e) => {
+                eprintln!("[launcher] proxy geo failed: {e} — falling back to cached snapshot");
+                if let Some(snap) = proxy::latest_test(&p.id) {
+                    if !snap.country_code.is_empty() || !snap.timezone.is_empty() {
+                        source = "cached-snapshot";
+                        Some(proxy::GeoInfo {
+                            ip: snap.ip,
+                            country: snap.country,
+                            country_code: snap.country_code,
+                            region: snap.region,
+                            city: snap.city,
+                            isp: snap.isp,
+                            timezone: snap.timezone,
+                            latitude: snap.latitude,
+                            longitude: snap.longitude,
+                            provider: snap.provider,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
                     None
                 }
+                .or_else(|| {
+                    if !p.country.is_empty() {
+                        source = "country-tag";
+                        Some(proxy::GeoInfo {
+                            ip: String::new(),
+                            country: String::new(),
+                            country_code: p.country.clone(),
+                            region: String::new(),
+                            city: String::new(),
+                            isp: String::new(),
+                            timezone: String::new(),
+                            latitude: 0.0,
+                            longitude: 0.0,
+                            provider: String::new(),
+                        })
+                    } else {
+                        None
+                    }
+                })
             }
-        }
+        },
+        None => match proxy::geo_check_via(None, None).await {
+            Ok(g) => {
+                source = "direct-live";
+                Some(g)
+            }
+            Err(e) => {
+                eprintln!("[launcher] direct geo failed: {e} — falling back to host TZ/locale");
+                None
+            }
+        },
     };
 
     let host_warn = || {
@@ -1224,8 +1408,16 @@ async fn resolve_auto_fields(
                 proxy::country_to_timezone(&g.country_code).to_string()
             };
             let locale = proxy::country_to_locale(&g.country_code).to_string();
-            let lat = if g.latitude != 0.0 { Some(g.latitude) } else { None };
-            let lng = if g.longitude != 0.0 { Some(g.longitude) } else { None };
+            let lat = if g.latitude != 0.0 {
+                Some(g.latitude)
+            } else {
+                None
+            };
+            let lng = if g.longitude != 0.0 {
+                Some(g.longitude)
+            } else {
+                None
+            };
             (tz, locale, lat, lng)
         }
         None => {
@@ -1249,16 +1441,21 @@ async fn resolve_auto_fields(
         }
     };
 
-    eprintln!(
-        "[launcher] resolved tz={resolved_tz} locale={resolved_locale} (source={source})"
-    );
+    eprintln!("[launcher] resolved tz={resolved_tz} locale={resolved_locale} (source={source})");
 
     if want_tz_auto {
-        cfg.insert("timezone".into(), serde_json::Value::String(resolved_tz.clone()));
+        cfg.insert(
+            "timezone".into(),
+            serde_json::Value::String(resolved_tz.clone()),
+        );
     }
 
     if want_lang_auto {
-        let base = resolved_locale.split('-').next().unwrap_or(&resolved_locale).to_string();
+        let base = resolved_locale
+            .split('-')
+            .next()
+            .unwrap_or(&resolved_locale)
+            .to_string();
         let accept = if resolved_locale == "en-US" {
             "en-US,en;q=0.9".to_string()
         } else {
@@ -1278,12 +1475,18 @@ async fn resolve_auto_fields(
             ]
         };
         if let Some(nav) = cfg.get_mut("navigator").and_then(|v| v.as_object_mut()) {
-            nav.insert("language".into(), serde_json::Value::String(resolved_locale.clone()));
+            nav.insert(
+                "language".into(),
+                serde_json::Value::String(resolved_locale.clone()),
+            );
             nav.insert("accept_language".into(), serde_json::Value::String(accept));
             nav.insert("languages".into(), serde_json::Value::Array(languages));
         }
         // Always overwrite icu_locale so it matches resolved navigator.language.
-        cfg.insert("icu_locale".into(), serde_json::Value::String(resolved_locale));
+        cfg.insert(
+            "icu_locale".into(),
+            serde_json::Value::String(resolved_locale),
+        );
     }
 
     if want_geo_auto {
@@ -1330,13 +1533,17 @@ fn harvest_widevine(udd: &Path) -> Result<()> {
         if !p.is_dir() {
             continue;
         }
-        let Some(version) = cdm_version_of(&p) else { continue };
+        let Some(version) = cdm_version_of(&p) else {
+            continue;
+        };
         let parsed = cdm_version(&version);
         if newest.as_ref().is_none_or(|(best, _, _)| parsed > *best) {
             newest = Some((parsed, version, p));
         }
     }
-    let Some((found, version, src)) = newest else { return Ok(()) };
+    let Some((found, version, src)) = newest else {
+        return Ok(());
+    };
 
     let cache = store::widevine_cache_dir()?;
     if let Some(have) = cdm_version_of(&cache) {
@@ -1366,7 +1573,10 @@ async fn ensure_widevine(proxy: Option<&proxy::ProxyEntry>) {
     if cfg!(test) {
         return;
     }
-    let (Ok(cache), Some(chrome)) = (crate::store::widevine_cache_dir(), crate::runtime::engine_version()) else {
+    let (Ok(cache), Some(chrome)) = (
+        crate::store::widevine_cache_dir(),
+        crate::runtime::engine_version(),
+    ) else {
         return;
     };
     let stamp = cache.with_extension("checked");
@@ -1385,11 +1595,22 @@ async fn ensure_widevine(proxy: Option<&proxy::ProxyEntry>) {
         static ONE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _one = ONE.lock().await;
         let have = cdm_version_of(&cache);
-        let fresh = std::fs::metadata(&stamp).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        let fresh = std::fs::metadata(&stamp)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
         if have.is_some() && fresh.is_some_and(|age| age < WIDEVINE_RECHECK) {
             return;
         }
-        match extensions::fetch_widevine(proxy.as_ref(), &chrome, have.as_deref(), &cache, have.is_some()).await {
+        match extensions::fetch_widevine(
+            proxy.as_ref(),
+            &chrome,
+            have.as_deref(),
+            &cache,
+            have.is_some(),
+        )
+        .await
+        {
             Ok(got) => {
                 if let Some(v) = got {
                     eprintln!("[launcher] widevine {v} from Google");
@@ -1418,8 +1639,8 @@ fn install_widevine(udd: &Path) -> Result<()> {
         anyhow::bail!("cache missing manifest.json — re-seed from a real Chrome");
     }
     let manifest_text = std::fs::read_to_string(&manifest_path)?;
-    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
-        .context("parse widevine manifest.json")?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_text).context("parse widevine manifest.json")?;
     let version = manifest
         .get("version")
         .and_then(|v| v.as_str())
@@ -1442,9 +1663,8 @@ fn install_widevine(udd: &Path) -> Result<()> {
             }
         }
     }
-    copy_dir_recursive(&src, &versioned).with_context(|| {
-        format!("copy {} → {}", src.display(), versioned.display())
-    })?;
+    copy_dir_recursive(&src, &versioned)
+        .with_context(|| format!("copy {} → {}", src.display(), versioned.display()))?;
     write_widevine_hint(&widevine_root, &versioned)?;
     eprintln!("[launcher] widevine pre-warmed: {}", versioned.display());
     Ok(())
@@ -1475,7 +1695,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         } else if ty.is_symlink() {
             // Resolve symlinks so dst tree stays portable across hosts.
             let target = std::fs::read_link(&from)?;
-            let resolved = if target.is_absolute() { target } else { from.parent().unwrap().join(target) };
+            let resolved = if target.is_absolute() {
+                target
+            } else {
+                from.parent().unwrap().join(target)
+            };
             if resolved.is_dir() {
                 copy_dir_recursive(&resolved, &to)?;
             } else {
@@ -1505,7 +1729,9 @@ fn host_timezone() -> Option<String> {
     }
     // Windows has neither of the above, and answering "UTC" there put every
     // profile on a clock almost nobody really keeps.
-    iana_time_zone::get_timezone().ok().filter(|s| !s.is_empty())
+    iana_time_zone::get_timezone()
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Extract BCP-47 locale from $LANG/$LC_ALL ("en_US.UTF-8" → "en-US").
@@ -1536,7 +1762,10 @@ mod tests {
         let synced = super::launch_profile_synced("any", false, false, Some("g"), 0, "").await;
         crate::migrate::release();
         for r in [plain, synced] {
-            assert_eq!(r.err().map(|e| e.to_string()).as_deref(), Some(super::LOCKED));
+            assert_eq!(
+                r.err().map(|e| e.to_string()).as_deref(),
+                Some(super::LOCKED)
+            );
         }
     }
 
@@ -1548,7 +1777,13 @@ mod tests {
         let scope = super::CancelScope::start(id);
         assert!(super::check_cancel(id).is_ok());
         super::cancel(id);
-        assert_eq!(super::check_cancel(id).err().map(|e| e.to_string()).as_deref(), Some(super::CANCELLED_BY_USER));
+        assert_eq!(
+            super::check_cancel(id)
+                .err()
+                .map(|e| e.to_string())
+                .as_deref(),
+            Some(super::CANCELLED_BY_USER)
+        );
         drop(scope);
         // Late, after that launch returned: the next launch starts clean.
         super::cancel(id);
@@ -1564,7 +1799,9 @@ mod tests {
         assert_eq!(super::in_flight(), before + 1);
         assert!(super::may_spawn("not-a-profile").is_ok());
         assert!(crate::migrate::hold());
-        let stopped = super::may_spawn("not-a-profile").err().map(|e| e.to_string());
+        let stopped = super::may_spawn("not-a-profile")
+            .err()
+            .map(|e| e.to_string());
         crate::migrate::release();
         drop(launching);
         assert_eq!(stopped.as_deref(), Some(super::CANCELLED));
@@ -1654,8 +1891,14 @@ mod tests {
 
     fn assert_window_fits(raw: &serde_json::Map<String, serde_json::Value>) {
         let (s, w) = (&raw["screen"], &raw["window"]);
-        assert!(w["outer_width"].as_i64() <= s["avail_width"].as_i64(), "{raw:?}");
-        assert!(w["outer_height"].as_i64() <= s["avail_height"].as_i64(), "{raw:?}");
+        assert!(
+            w["outer_width"].as_i64() <= s["avail_width"].as_i64(),
+            "{raw:?}"
+        );
+        assert!(
+            w["outer_height"].as_i64() <= s["avail_height"].as_i64(),
+            "{raw:?}"
+        );
     }
 
     #[test]
@@ -1663,11 +1906,24 @@ mod tests {
         let mut raw = template("Windows", WIN_UA);
         assert!(claim_host_screen(&mut raw, Some((2560, 1440, 1.5))));
         let s = raw["screen"].as_object().unwrap();
-        assert_eq!((s["width"].as_i64(), s["height"].as_i64()), (Some(2560), Some(1440)));
-        assert_eq!(s["avail_height"], 1392, "the template's 48 px taskbar stays");
-        assert_eq!(s["device_pixel_ratio"].as_f64(), Some(1.5), "the host's scale goes with its size");
+        assert_eq!(
+            (s["width"].as_i64(), s["height"].as_i64()),
+            (Some(2560), Some(1440))
+        );
+        assert_eq!(
+            s["avail_height"], 1392,
+            "the template's 48 px taskbar stays"
+        );
+        assert_eq!(
+            s["device_pixel_ratio"].as_f64(),
+            Some(1.5),
+            "the host's scale goes with its size"
+        );
         let w = raw["window"].as_object().unwrap();
-        assert_eq!((w["outer_width"].as_i64(), w["outer_height"].as_i64()), (Some(2560), Some(1391)));
+        assert_eq!(
+            (w["outer_width"].as_i64(), w["outer_height"].as_i64()),
+            (Some(2560), Some(1391))
+        );
         assert_eq!(w["inner_height"], 1304);
         assert_eq!(w["keep_focus"], true, "the window's own settings stay");
         assert_window_fits(&raw);
@@ -1689,7 +1945,9 @@ mod tests {
     #[test]
     fn mac_and_phone_templates_keep_the_fingerprint_screen() {
         let cases = [
-            ("macOS", MAC_UA), ("MacIntel", MAC_UA), ("Android", PHONE_UA),
+            ("macOS", MAC_UA),
+            ("MacIntel", MAC_UA),
+            ("Android", PHONE_UA),
             ("Linux armv8l", PHONE_UA),
             // A phone whose platform reads plain "Linux" is still a phone.
             ("Linux", PHONE_UA),
@@ -1697,7 +1955,10 @@ mod tests {
         for (platform, ua) in cases {
             let mut raw = template(platform, ua);
             let before = raw.clone();
-            assert!(!claim_host_screen(&mut raw, Some((2560, 1440, 1.5))), "{platform}");
+            assert!(
+                !claim_host_screen(&mut raw, Some((2560, 1440, 1.5))),
+                "{platform}"
+            );
             assert_eq!(raw, before, "{platform}");
         }
     }
@@ -1706,12 +1967,28 @@ mod tests {
     #[test]
     fn the_real_screen_mode_skips_phones_and_hand_picked_screens() {
         use super::wants_real_screen;
-        for (platform, ua) in [("Android", PHONE_UA), ("Linux armv81", PHONE_UA), ("Linux", PHONE_UA)] {
-            assert!(!wants_real_screen(Some("real"), false, &template(platform, ua)), "{platform}");
+        for (platform, ua) in [
+            ("Android", PHONE_UA),
+            ("Linux armv81", PHONE_UA),
+            ("Linux", PHONE_UA),
+        ] {
+            assert!(
+                !wants_real_screen(Some("real"), false, &template(platform, ua)),
+                "{platform}"
+            );
         }
-        let mut tablet = template("Android", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36");
-        tablet.insert("client_hints".into(), json!({ "mobile": false, "platform": "Android" }));
-        assert!(!wants_real_screen(Some("real"), false, &tablet), "a tablet is a handset too");
+        let mut tablet = template(
+            "Android",
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+        );
+        tablet.insert(
+            "client_hints".into(),
+            json!({ "mobile": false, "platform": "Android" }),
+        );
+        assert!(
+            !wants_real_screen(Some("real"), false, &tablet),
+            "a tablet is a handset too"
+        );
         let desktop = template("Windows", WIN_UA);
         assert!(wants_real_screen(Some("real"), false, &desktop));
         assert!(!wants_real_screen(Some("real"), true, &desktop));
@@ -1729,7 +2006,10 @@ mod tests {
         let mut raw = template("Windows", WIN_UA);
         raw["_meta"]["id"] = json!("p1");
         let before = raw.clone();
-        assert!(!claim_host_screen(&mut raw, Some((2560, 1440, 1.5))), "a live profile keeps its screen");
+        assert!(
+            !claim_host_screen(&mut raw, Some((2560, 1440, 1.5))),
+            "a live profile keeps its screen"
+        );
         assert_eq!(raw, before);
         let mut raw = template("Windows", WIN_UA);
         let before = raw.clone();
@@ -1743,36 +2023,68 @@ mod tests {
     fn create_paths_claim_the_host_screen_and_existing_profiles_keep_theirs() {
         let _root = crate::store::test_root("host-screen").with_config();
         let dir = crate::store::fingerprints_dir().unwrap();
-        let lib = [("t-win", "Windows", WIN_UA), ("t-linux", "Linux", LINUX_UA),
-                   ("t-mac", "macOS", MAC_UA), ("t-phone", "Android", PHONE_UA)];
+        let lib = [
+            ("t-win", "Windows", WIN_UA),
+            ("t-linux", "Linux", LINUX_UA),
+            ("t-mac", "macOS", MAC_UA),
+            ("t-phone", "Android", PHONE_UA),
+        ];
         for (id, platform, ua) in lib {
             let mut payload = template(platform, ua);
             payload.remove("_meta");
-            std::fs::write(dir.join(format!("{id}.json")), serde_json::Value::Object(payload).to_string()).unwrap();
+            std::fs::write(
+                dir.join(format!("{id}.json")),
+                serde_json::Value::Object(payload).to_string(),
+            )
+            .unwrap();
         }
         let host = Some((2560, 1440, 1.5));
         for id in ["t-win", "t-linux"] {
             // From a template, and as the API, MCP and a run get it (enriched, with noise).
-            let made = [crate::library_profile(id, host).unwrap(), crate::fingerprint_config_on(None, id, host).unwrap()];
+            let made = [
+                crate::library_profile(id, host).unwrap(),
+                crate::fingerprint_config_on(None, id, host).unwrap(),
+            ];
             for cfg in made {
                 assert_eq!(cfg["screen"]["width"], 2560, "{id}");
                 assert_eq!(cfg["screen"]["height"], 1440, "{id}");
-                assert_eq!(cfg["screen"]["device_pixel_ratio"].as_f64(), Some(1.5), "{id}");
-                assert!(cfg["_meta"].get("screen_custom").is_none(), "a default is not a pick by hand");
+                assert_eq!(
+                    cfg["screen"]["device_pixel_ratio"].as_f64(),
+                    Some(1.5),
+                    "{id}"
+                );
+                assert!(
+                    cfg["_meta"].get("screen_custom").is_none(),
+                    "a default is not a pick by hand"
+                );
                 assert_window_fits(&cfg);
             }
         }
         for id in ["t-mac", "t-phone"] {
-            assert_eq!(crate::library_profile(id, host).unwrap()["screen"]["width"], 1920, "{id}");
-            assert_eq!(crate::fingerprint_config_on(None, id, host).unwrap()["screen"]["width"], 1920, "{id}");
+            assert_eq!(
+                crate::library_profile(id, host).unwrap()["screen"]["width"],
+                1920,
+                "{id}"
+            );
+            assert_eq!(
+                crate::fingerprint_config_on(None, id, host).unwrap()["screen"]["width"],
+                1920,
+                "{id}"
+            );
         }
         // No monitor to ask (as here): the fingerprint's own screen.
-        assert_eq!(crate::build_fingerprint_config(None, "t-win").unwrap()["screen"]["width"], 1920);
+        assert_eq!(
+            crate::build_fingerprint_config(None, "t-win").unwrap()["screen"]["width"],
+            1920
+        );
         // #147: the API's answer follows the language it sets, and reports a version Chrome can.
         let api = crate::build_fingerprint_config(None, "t-win").unwrap();
         assert!(api["icu_locale"].is_null());
         let pv = api["navigator"]["platform_version"].as_str().unwrap();
-        assert!(crate::platform_version::WINDOWS_PLATFORM_VERSIONS.contains(&pv), "{pv}");
+        assert!(
+            crate::platform_version::WINDOWS_PLATFORM_VERSIONS.contains(&pv),
+            "{pv}"
+        );
 
         // A new profile with a screen picked by hand is saved with it, marked.
         let mut picked = template("Windows", WIN_UA);
@@ -1801,11 +2113,20 @@ mod tests {
             profile_id: stored.meta.id.clone(),
             udd: PathBuf::from(format!("/data/user-data/{}", stored.meta.id)),
             proxy: proxy.map(|p| serde_json::from_value(p).unwrap()),
-            extensions: stored.meta.extensions.iter().map(|id| PathBuf::from(format!("/data/extensions/{id}"))).collect(),
+            extensions: stored
+                .meta
+                .extensions
+                .iter()
+                .map(|id| PathBuf::from(format!("/data/extensions/{id}")))
+                .collect(),
             library: Some(PathBuf::from("/data/extensions")),
             ext_ids: Vec::new(),
             bookmarks: Vec::new(),
-            exit: if stored.meta.temporary { ExitHook::Temporary } else { ExitHook::Local },
+            exit: if stored.meta.temporary {
+                ExitHook::Temporary
+            } else {
+                ExitHook::Local
+            },
             cdp: false,
             team: false,
             stored,
@@ -1813,7 +2134,12 @@ mod tests {
     }
 
     fn settings() -> crate::settings::Settings {
-        crate::settings::Settings { helper_enabled: true, camera_enabled: true, show_profile_name: true, ..Default::default() }
+        crate::settings::Settings {
+            helper_enabled: true,
+            camera_enabled: true,
+            show_profile_name: true,
+            ..Default::default()
+        }
     }
 
     /// As launched on an engine from before patch 0092's second part.
@@ -1821,7 +2147,12 @@ mod tests {
         argv_on(false, input, opts, s)
     }
 
-    fn argv_on(ext_alone: bool, input: &LaunchInput, opts: &LaunchOpts, s: &crate::settings::Settings) -> Vec<String> {
+    fn argv_on(
+        ext_alone: bool,
+        input: &LaunchInput,
+        opts: &LaunchOpts,
+        s: &crate::settings::Settings,
+    ) -> Vec<String> {
         let mut raw = input.stored.config.clone();
         raw.remove("_meta");
         // Spelled out rather than joined, so the snapshot reads the same on Windows.
@@ -1844,7 +2175,10 @@ mod tests {
     /// #162: the in-browser Change IP and its shortcut, only for a proxy with a change-IP link.
     #[test]
     fn a_proxy_with_a_change_ip_link_gets_the_button_and_its_shortcut() {
-        let p = input(json!({ "_meta": { "id": "p9", "rev": 1 }, "name": "Rotating" }), None);
+        let p = input(
+            json!({ "_meta": { "id": "p9", "rev": 1 }, "name": "Rotating" }),
+            None,
+        );
         let raw = p.stored.config.clone();
         let fp = PathBuf::from("/fp.json");
         let ready = |change_ip| Ready {
@@ -1858,18 +2192,31 @@ mod tests {
             ext_alone: false,
             change_ip,
         };
-        let s = crate::settings::Settings { change_ip_hotkey: Some(" Ctrl+Shift+U ".into()), ..settings() };
+        let s = crate::settings::Settings {
+            change_ip_hotkey: Some(" Ctrl+Shift+U ".into()),
+            ..settings()
+        };
         let on = command_line(&p, &ready(true), &UI, &s);
         assert!(on.contains(&"--shardx-change-ip".to_string()));
         assert!(on.contains(&"--shardx-change-ip-key=Ctrl+Shift+U".to_string()));
         let no_key = command_line(&p, &ready(true), &UI, &settings());
         assert!(no_key.contains(&"--shardx-change-ip".to_string()));
-        assert!(!no_key.iter().any(|a| a.starts_with("--shardx-change-ip-key")));
+        assert!(!no_key
+            .iter()
+            .any(|a| a.starts_with("--shardx-change-ip-key")));
         let off = command_line(&p, &ready(false), &UI, &s);
         assert!(!off.iter().any(|a| a.starts_with("--shardx-change-ip")));
     }
 
-    const UI: LaunchOpts = LaunchOpts { enable_cdp: false, headless: false, sync_group: None, bus_port: 4242, bus_token: "tok", space: None, password: None };
+    const UI: LaunchOpts = LaunchOpts {
+        enable_cdp: false,
+        headless: false,
+        sync_group: None,
+        bus_port: 4242,
+        bus_token: "tok",
+        space: None,
+        password: None,
+    };
 
     /// What the engine was started with before the launch was split up, for
     /// an ordinary profile started from the list. It must not move.
@@ -1902,11 +2249,19 @@ mod tests {
     /// #126: off in Settings, the engine is told to show no name, and the pill colour goes too.
     #[test]
     fn the_profile_name_can_be_hidden() {
-        let p = input(json!({ "_meta": { "id": "p3", "rev": 1, "color": "#3366ff" }, "name": "Hidden" }), None);
-        let s = crate::settings::Settings { show_profile_name: false, ..settings() };
+        let p = input(
+            json!({ "_meta": { "id": "p3", "rev": 1, "color": "#3366ff" }, "name": "Hidden" }),
+            None,
+        );
+        let s = crate::settings::Settings {
+            show_profile_name: false,
+            ..settings()
+        };
         let args = argv(&p, &UI, &s);
         assert!(args.iter().any(|a| a == "--shardx-hide-profile-name"));
-        assert!(!args.iter().any(|a| a.starts_with("--shardx-profile-pill-color")));
+        assert!(!args
+            .iter()
+            .any(|a| a.starts_with("--shardx-profile-pill-color")));
     }
 
     /// The same for an automated start behind a proxy, with everything else on.
@@ -1916,12 +2271,25 @@ mod tests {
             json!({ "_meta": { "id": "p2", "rev": 1, "extensions": ["e1", "e2"], "android_media": true },
                     "name": "Phone", "webrtc": "tcp_only", "webgpu": { "vendor": "x" },
                     "client_hints": { "mobile": true } }),
-            Some(json!({ "id": "x1", "name": "x", "kind": "http", "host": "127.0.0.1", "port": 9,
-                         "username": "u s", "password": "p@ss" })),
+            Some(
+                json!({ "id": "x1", "name": "x", "kind": "http", "host": "127.0.0.1", "port": 9,
+                         "username": "u s", "password": "p@ss" }),
+            ),
         );
         p.cdp = true;
-        let opts = LaunchOpts { enable_cdp: true, headless: true, sync_group: Some("grp"), bus_port: 4243, bus_token: "tok2", space: None, password: None };
-        let s = crate::settings::Settings { extra_args: "--lang=de".into(), ..settings() };
+        let opts = LaunchOpts {
+            enable_cdp: true,
+            headless: true,
+            sync_group: Some("grp"),
+            bus_port: 4243,
+            bus_token: "tok2",
+            space: None,
+            password: None,
+        };
+        let s = crate::settings::Settings {
+            extra_args: "--lang=de".into(),
+            ..settings()
+        };
         assert_eq!(
             argv(&p, &opts, &s),
             [
@@ -1955,9 +2323,13 @@ mod tests {
     /// own Web Store extensions), an old one keeps it, and nothing else on the line moves.
     #[test]
     fn only_an_old_engine_gets_the_except_list() {
-        let p = input(json!({ "_meta": { "id": "p5", "rev": 1, "extensions": ["e1", "e2"] } }), None);
+        let p = input(
+            json!({ "_meta": { "id": "p5", "rev": 1, "extensions": ["e1", "e2"] } }),
+            None,
+        );
         let except = "--disable-extensions-except=/data/extensions/e1,/data/extensions/e2";
-        let dir = std::env::temp_dir().join(format!("shardx-launch-ext-alone-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shardx-launch-ext-alone-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let engine = |name: &str, code: &[u8]| {
             let bin = dir.join(name).join("chrome");
@@ -1973,11 +2345,22 @@ mod tests {
         let on_old = argv_on(old, &p, &UI, &settings());
         let on_new = argv_on(new, &p, &UI, &settings());
         assert!(on_old.iter().any(|a| a == except), "{on_old:?}");
-        assert!(!on_old.iter().any(|a| a.starts_with("--shardx-extension-library")), "{on_old:?}");
-        assert!(!on_new.iter().any(|a| a.starts_with("--disable-extensions")), "{on_new:?}");
+        assert!(
+            !on_old
+                .iter()
+                .any(|a| a.starts_with("--shardx-extension-library")),
+            "{on_old:?}"
+        );
+        assert!(
+            !on_new.iter().any(|a| a.starts_with("--disable-extensions")),
+            "{on_new:?}"
+        );
         // The except-list gives way to the library, right after the extensions.
         let mut want: Vec<String> = on_old.into_iter().filter(|a| a != except).collect();
-        let at = want.iter().position(|a| a == "--load-extension=/data/extensions/e1,/data/extensions/e2").unwrap();
+        let at = want
+            .iter()
+            .position(|a| a == "--load-extension=/data/extensions/e1,/data/extensions/e2")
+            .unwrap();
         want.insert(at + 1, "--shardx-extension-library=/data/extensions".into());
         assert_eq!(on_new, want);
     }
@@ -1986,7 +2369,10 @@ mod tests {
     /// one's own would come in past the Cookies right.
     #[test]
     fn a_team_profile_keeps_the_except_list_on_a_new_engine() {
-        let mut p = input(json!({ "_meta": { "id": "p6", "rev": 1, "extensions": ["e1"] } }), None);
+        let mut p = input(
+            json!({ "_meta": { "id": "p6", "rev": 1, "extensions": ["e1"] } }),
+            None,
+        );
         p.team = true;
         let on_new = argv_on(true, &p, &UI, &settings());
         for want in [
@@ -1994,7 +2380,10 @@ mod tests {
             "--load-extension=/data/extensions/e1",
             "--shardx-extension-library=/data/extensions",
         ] {
-            assert!(on_new.iter().any(|a| a == want), "{want} missing from {on_new:?}");
+            assert!(
+                on_new.iter().any(|a| a == want),
+                "{want} missing from {on_new:?}"
+            );
         }
     }
 
@@ -2004,9 +2393,14 @@ mod tests {
     fn a_new_engine_gets_the_library_even_with_no_extensions() {
         let mut p = input(json!({ "_meta": { "id": "p7", "rev": 1 } }), None);
         let ext = |argv: Vec<String>| -> Vec<String> {
-            argv.into_iter().filter(|a| a.contains("extension")).collect()
+            argv.into_iter()
+                .filter(|a| a.contains("extension"))
+                .collect()
         };
-        assert_eq!(ext(argv_on(true, &p, &UI, &settings())), ["--shardx-extension-library=/data/extensions"]);
+        assert_eq!(
+            ext(argv_on(true, &p, &UI, &settings())),
+            ["--shardx-extension-library=/data/extensions"]
+        );
         assert!(ext(argv_on(false, &p, &UI, &settings())).is_empty());
         p.library = None;
         assert!(ext(argv_on(true, &p, &UI, &settings())).is_empty());
@@ -2016,8 +2410,13 @@ mod tests {
     #[test]
     fn no_debugging_port_without_a_cookies_pass() {
         let p = input(json!({ "_meta": { "id": "p3" } }), None);
-        let asked = LaunchOpts { enable_cdp: true, ..UI };
-        assert!(!argv(&p, &asked, &settings()).iter().any(|a| a.starts_with("--remote-debugging")));
+        let asked = LaunchOpts {
+            enable_cdp: true,
+            ..UI
+        };
+        assert!(!argv(&p, &asked, &settings())
+            .iter()
+            .any(|a| a.starts_with("--remote-debugging")));
     }
 
     #[test]
@@ -2045,10 +2444,21 @@ mod tests {
             "--ozone-platform=wayland",
         ];
         let kept = super::team_extra_args(given.iter().map(|s| s.to_string()).collect());
-        assert_eq!(kept, ["--lang=de", "--disable-gpu", "--user-data-directory=kept", "--ozone-platform=wayland"]);
+        assert_eq!(
+            kept,
+            [
+                "--lang=de",
+                "--disable-gpu",
+                "--user-data-directory=kept",
+                "--ozone-platform=wayland"
+            ]
+        );
 
         // Applied only to a team's profile; this machine's own keep every switch.
-        let s = crate::settings::Settings { extra_args: "--remote-debugging-port=9222 --lang=de".into(), ..settings() };
+        let s = crate::settings::Settings {
+            extra_args: "--remote-debugging-port=9222 --lang=de".into(),
+            ..settings()
+        };
         let mut p = input(json!({ "_meta": { "id": "p4" } }), None);
         assert!(argv(&p, &UI, &s).contains(&"--remote-debugging-port=9222".to_string()));
         p.team = true;
@@ -2066,13 +2476,19 @@ mod tests {
             json!({ "id": "x1", "name": "x", "kind": "socks5", "host": "10.0.0.1", "port": 1080 }),
         )
         .unwrap();
-        let inline = json!({ "id": "", "name": "i", "kind": "http", "host": "10.0.0.2", "port": 8080 });
+        let inline =
+            json!({ "id": "", "name": "i", "kind": "http", "host": "10.0.0.2", "port": 8080 });
 
         let gone = super::bound_proxy(&stored(json!({ "proxy_id": "x9" })), "p", |_| Ok(None));
         let why = gone.err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(why.contains("no longer exists") && why.contains("x9"), "{why}");
+        assert!(
+            why.contains("no longer exists") && why.contains("x9"),
+            "{why}"
+        );
         // A store that cannot be read is no answer either.
-        let unread = super::bound_proxy(&stored(json!({ "proxy_id": "x1" })), "p", |_| Err(anyhow::anyhow!("disk")));
+        let unread = super::bound_proxy(&stored(json!({ "proxy_id": "x1" })), "p", |_| {
+            Err(anyhow::anyhow!("disk"))
+        });
         let why = unread.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(why.contains("x1") && why.contains("disk"), "{why}");
         // Bound by id even when something is also written on the profile.
@@ -2085,11 +2501,17 @@ mod tests {
         });
         assert_eq!(found.unwrap().map(|p| p.host).as_deref(), Some("10.0.0.1"));
         // No binding, or a blank one: the profile's own line, if any. The store is not asked.
-        for meta in [json!({}), json!({ "proxy_id": "" }), json!({ "proxy_id": "  " })] {
+        for meta in [
+            json!({}),
+            json!({ "proxy_id": "" }),
+            json!({ "proxy_id": "  " }),
+        ] {
             let none = super::bound_proxy(&stored(meta), "p", |_| panic!("nothing is bound"));
             assert!(none.unwrap().is_none());
         }
-        let quick = super::bound_proxy(&stored(json!({ "inline_proxy": inline })), "p", |_| panic!("nothing is bound"));
+        let quick = super::bound_proxy(&stored(json!({ "inline_proxy": inline })), "p", |_| {
+            panic!("nothing is bound")
+        });
         assert_eq!(quick.unwrap().map(|p| p.host).as_deref(), Some("10.0.0.2"));
     }
 
@@ -2103,12 +2525,22 @@ mod tests {
         let root = crate::store::test_root("gone-proxy");
         let id = format!("gone-{}", uuid::Uuid::new_v4().simple());
         let body = json!({ "_meta": { "id": id, "rev": 1, "proxy_id": format!("px-{id}") }, "name": "Gone" });
-        std::fs::write(crate::store::profiles_dir().unwrap().join(format!("{id}.json")), body.to_string()).unwrap();
+        std::fs::write(
+            crate::store::profiles_dir()
+                .unwrap()
+                .join(format!("{id}.json")),
+            body.to_string(),
+        )
+        .unwrap();
 
         // An engine that leaves a mark if it is ever started.
         let marker = root.path.join("started");
         let engine = root.path.join("engine.sh");
-        std::fs::write(&engine, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::write(
+            &engine,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
         std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         for enable_cdp in [false, true] {
@@ -2132,15 +2564,36 @@ mod tests {
         let root = crate::store::test_root("start-twice");
         let id = format!("twice-{}", uuid::Uuid::new_v4().simple());
         let body = json!({ "_meta": { "id": id, "rev": 1 }, "name": "Twice" });
-        std::fs::write(crate::store::profiles_dir().unwrap().join(format!("{id}.json")), body.to_string()).unwrap();
+        std::fs::write(
+            crate::store::profiles_dir()
+                .unwrap()
+                .join(format!("{id}.json")),
+            body.to_string(),
+        )
+        .unwrap();
         let started = root.path.join("started");
         let engine = root.path.join("engine.sh");
-        std::fs::write(&engine, format!("#!/bin/sh\necho $$ >> '{}'\nexec sleep 60\n", started.display())).unwrap();
+        std::fs::write(
+            &engine,
+            format!(
+                "#!/bin/sh\necho $$ >> '{}'\nexec sleep 60\n",
+                started.display()
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let count = || std::fs::read_to_string(&started).unwrap_or_default().lines().count();
+        let count = || {
+            std::fs::read_to_string(&started)
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
 
         let held = super::Starting::claim(&id).unwrap();
-        let busy = super::launch_using(|| Ok(engine.clone()), &id, &UI).await.err().map(|e| e.to_string());
+        let busy = super::launch_using(|| Ok(engine.clone()), &id, &UI)
+            .await
+            .err()
+            .map(|e| e.to_string());
         assert_eq!(busy.as_deref(), Some(crate::space::open::BUSY));
         drop(held);
 
@@ -2149,8 +2602,16 @@ mod tests {
             super::launch_using(|| Ok(engine.clone()), &id, &UI),
             super::launch_using(|| Ok(engine.clone()), &id, &UI)
         );
-        assert!(a.is_ok() != b.is_ok(), "{:?} / {:?}", a.as_ref().map(|o| o.pid), b.as_ref().map(|o| o.pid));
-        let again = super::launch_using(|| Ok(engine.clone()), &id, &UI).await.err().map(|e| e.to_string());
+        assert!(
+            a.is_ok() != b.is_ok(),
+            "{:?} / {:?}",
+            a.as_ref().map(|o| o.pid),
+            b.as_ref().map(|o| o.pid)
+        );
+        let again = super::launch_using(|| Ok(engine.clone()), &id, &UI)
+            .await
+            .err()
+            .map(|e| e.to_string());
         assert!(again.unwrap_or_default().contains("is already running"));
         for _ in 0..100 {
             if count() > 0 {
@@ -2175,22 +2636,42 @@ mod tests {
     fn the_input_follows_the_passes_and_the_profile() {
         let _root = crate::store::test_root("launch-input");
         let dir = crate::store::profiles_dir().unwrap();
-        std::fs::write(dir.join("li-temp.json"), json!({ "_meta": { "id": "li-temp", "temporary": true } }).to_string()).unwrap();
-        std::fs::write(dir.join("li-kept.json"), json!({ "_meta": { "id": "li-kept" } }).to_string()).unwrap();
+        std::fs::write(
+            dir.join("li-temp.json"),
+            json!({ "_meta": { "id": "li-temp", "temporary": true } }).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("li-kept.json"),
+            json!({ "_meta": { "id": "li-kept" } }).to_string(),
+        )
+        .unwrap();
         let perm = crate::space::perm::start;
         let cookies = crate::space::perm::cookies;
 
         let plain = super::launch_input(&perm("li-kept").unwrap(), None, None).unwrap();
         assert!(!plain.cdp && !plain.team && plain.proxy.is_none());
         assert!(matches!(plain.exit, ExitHook::Local));
-        assert_eq!(plain.udd, crate::store::user_data_root().unwrap().join("li-kept"));
+        assert_eq!(
+            plain.udd,
+            crate::store::user_data_root().unwrap().join("li-kept")
+        );
 
-        let automated = super::launch_input(&perm("li-temp").unwrap(), Some(&cookies("li-temp").unwrap()), None).unwrap();
+        let automated = super::launch_input(
+            &perm("li-temp").unwrap(),
+            Some(&cookies("li-temp").unwrap()),
+            None,
+        )
+        .unwrap();
         assert!(automated.cdp);
         assert!(matches!(automated.exit, ExitHook::Temporary));
 
         // A pass for one profile opens nothing on another.
-        let crossed = super::launch_input(&perm("li-kept").unwrap(), Some(&cookies("li-temp").unwrap()), None);
+        let crossed = super::launch_input(
+            &perm("li-kept").unwrap(),
+            Some(&cookies("li-temp").unwrap()),
+            None,
+        );
         assert!(crossed.is_err());
     }
 
@@ -2200,7 +2681,8 @@ mod tests {
     fn a_protected_profile_opens_for_its_start_and_seals_again() {
         let _root = crate::store::test_root("launch-protected");
         let dir = crate::store::profiles_dir().unwrap();
-        let body = json!({ "_meta": { "id": "lp-1" }, "name": "Locked", "notes": "notes-marker-9" });
+        let body =
+            json!({ "_meta": { "id": "lp-1" }, "name": "Locked", "notes": "notes-marker-9" });
         std::fs::write(dir.join("lp-1.json"), body.to_string()).unwrap();
         let udd = crate::store::user_data_root().unwrap().join("lp-1");
         std::fs::create_dir_all(udd.join("Default")).unwrap();
@@ -2209,7 +2691,10 @@ mod tests {
         assert!(!udd.exists());
         let start = || crate::space::perm::start("lp-1").unwrap();
 
-        let refused = super::launch_input(&start(), None, None).err().unwrap().to_string();
+        let refused = super::launch_input(&start(), None, None)
+            .err()
+            .unwrap()
+            .to_string();
         assert_eq!(refused, crate::space::profile::PASSWORD_REQUIRED);
         assert!(super::launch_input(&start(), None, Some("not it at all")).is_err());
         assert!(!udd.exists(), "a refused start opens nothing");
@@ -2221,7 +2706,10 @@ mod tests {
         assert_eq!(input.stored.config.get("notes").unwrap(), "notes-marker-9");
         assert!(crate::space::profile::any_unsealed());
         drop(input);
-        assert!(!udd.exists(), "dropped before the browser ran: sealed again");
+        assert!(
+            !udd.exists(),
+            "dropped before the browser ran: sealed again"
+        );
         assert!(!crate::space::profile::any_unsealed());
         let file = std::fs::read_to_string(dir.join("lp-1.json")).unwrap();
         assert!(!file.contains("notes-marker-9"));
@@ -2233,7 +2721,12 @@ mod tests {
     fn ui_language_reaches_the_engine_only_when_chosen() {
         let _root = crate::store::test_root("launch-ui-language");
         let dir = crate::store::profiles_dir().unwrap();
-        for (id, ui) in [("ul-old", None), ("ul-on", Some("profile")), ("ul-sys", Some("system")), ("ul-odd", Some("Profile"))] {
+        for (id, ui) in [
+            ("ul-old", None),
+            ("ul-on", Some("profile")),
+            ("ul-sys", Some("system")),
+            ("ul-odd", Some("Profile")),
+        ] {
             let mut p = json!({ "_meta": { "id": id }, "name": id });
             if let Some(ui) = ui {
                 p["ui_language"] = json!(ui);
@@ -2241,7 +2734,8 @@ mod tests {
             std::fs::write(dir.join(format!("{id}.json")), p.to_string()).unwrap();
         }
         let engine = |id: &str| {
-            let input = super::launch_input(&crate::space::perm::start(id).unwrap(), None, None).unwrap();
+            let input =
+                super::launch_input(&crate::space::perm::start(id).unwrap(), None, None).unwrap();
             serde_json::to_value(super::engine_config(&input.stored)).unwrap()
         };
 

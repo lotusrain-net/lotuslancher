@@ -22,8 +22,7 @@ pub(in crate::space) fn file_lock() -> MutexGuard<'static, ()> {
 fn write_atomic(path: &Path, body: &[u8]) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     {
-        let mut f = fs::File::create(&tmp)
-            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut f = fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(body)?;
         // Durable before the rename, or the rename can publish an empty file.
         f.sync_all()?;
@@ -196,9 +195,7 @@ pub fn names_a_window(config: &serde_json::Map<String, serde_json::Value>) -> bo
 }
 
 /// The screen the profile claims, as (width, height).
-pub fn claimed_screen(
-    config: &serde_json::Map<String, serde_json::Value>,
-) -> Option<(i64, i64)> {
+pub fn claimed_screen(config: &serde_json::Map<String, serde_json::Value>) -> Option<(i64, i64)> {
     let screen = config.get("screen")?;
     let n = |k: &str| screen.get(k).and_then(|v| v.as_i64()).filter(|v| *v > 0);
     Some((n("width")?, n("height")?))
@@ -208,7 +205,11 @@ pub fn claimed_screen(
 /// in the same order, so launcher and engine agree on what a profile is.
 pub fn claims_mobile(config: &serde_json::Map<String, serde_json::Value>) -> bool {
     let ch = config.get("client_hints");
-    if ch.and_then(|c| c.get("mobile")).and_then(|v| v.as_bool()).unwrap_or(false) {
+    if ch
+        .and_then(|c| c.get("mobile"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return true;
     }
     if ch
@@ -251,13 +252,18 @@ pub(in crate::space) fn list_all() -> Result<Vec<ProfileMeta>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if store::is_os_litter(&entry.file_name()) || entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
+        if store::is_os_litter(&entry.file_name())
+            || entry.path().extension().and_then(|s| s.to_str()) != Some("json")
+        {
             continue;
         }
         let path = entry.path();
         // One unreadable file must not take the whole list with it.
-        let Ok(body) = fs::read_to_string(&path) else { continue };
-        let Ok(mut stored): std::result::Result<StoredProfile, _> = serde_json::from_str(&body) else {
+        let Ok(body) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(mut stored): std::result::Result<StoredProfile, _> = serde_json::from_str(&body)
+        else {
             continue;
         };
         // Hide ephemeral profiles.
@@ -336,10 +342,14 @@ pub(in crate::space) fn purge_temporary() -> Result<usize> {
     let mut n = 0;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if store::is_os_litter(&entry.file_name()) || entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
+        if store::is_os_litter(&entry.file_name())
+            || entry.path().extension().and_then(|s| s.to_str()) != Some("json")
+        {
             continue;
         }
-        let Ok(body) = fs::read_to_string(entry.path()) else { continue; };
+        let Ok(body) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
         let Ok(stored): std::result::Result<StoredProfile, _> = serde_json::from_str(&body) else {
             continue;
         };
@@ -400,7 +410,10 @@ fn fill_noise_seeds(config: &mut serde_json::Map<String, serde_json::Value>, id:
             .map(|n| n == 0)
             .unwrap_or(true);
         if needs {
-            obj.insert("seed".into(), serde_json::Value::from(derive_noise_seed(id, slot)));
+            obj.insert(
+                "seed".into(),
+                serde_json::Value::from(derive_noise_seed(id, slot)),
+            );
         }
     }
 }
@@ -590,7 +603,8 @@ pub(in crate::space) fn make_copy(src: &mut StoredProfile) -> String {
     src.meta.total_runtime_ms = 0;
     src.meta.rev = 0;
     let name = format!("{old_name} (copy)");
-    src.config.insert("name".into(), serde_json::Value::String(name.clone()));
+    src.config
+        .insert("name".into(), serde_json::Value::String(name.clone()));
     // Re-randomize CPU/RAM/platform_version so the copy doesn't collide on those axes.
     crate::randomize_platform_version(&mut src.config);
     crate::randomize_hardware(&mut src.config);
@@ -679,10 +693,14 @@ pub(in crate::space) fn rename_folder(old: &str, new: &str) -> Result<usize> {
     let mut n = 0;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if store::is_os_litter(&entry.file_name()) || entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
+        if store::is_os_litter(&entry.file_name())
+            || entry.path().extension().and_then(|s| s.to_str()) != Some("json")
+        {
             continue;
         }
-        let Ok(body) = fs::read_to_string(entry.path()) else { continue; };
+        let Ok(body) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
         let Ok(mut stored): std::result::Result<StoredProfile, _> = serde_json::from_str(&body)
         else {
             continue;
@@ -705,10 +723,14 @@ pub(in crate::space) fn delete_folder(name: &str, delete_profiles: bool) -> Resu
     let mut n = 0;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if store::is_os_litter(&entry.file_name()) || entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
+        if store::is_os_litter(&entry.file_name())
+            || entry.path().extension().and_then(|s| s.to_str()) != Some("json")
+        {
             continue;
         }
-        let Ok(body) = fs::read_to_string(entry.path()) else { continue; };
+        let Ok(body) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
         let Ok(mut stored): std::result::Result<StoredProfile, _> = serde_json::from_str(&body)
         else {
             continue;
@@ -769,17 +791,31 @@ mod tests {
         let good = serde_json::json!({ "_meta": { "id": "p1" }, "name": "Kept" });
         std::fs::write(dir.join("p1.json"), serde_json::to_vec(&good).unwrap()).unwrap();
         // An AppleDouble header: not UTF-8, not JSON.
-        std::fs::write(dir.join("._p1.json"), [0x00, 0x05, 0x16, 0x07, 0xff, 0xfe, 0x80, 0x81]).unwrap();
+        std::fs::write(
+            dir.join("._p1.json"),
+            [0x00, 0x05, 0x16, 0x07, 0xff, 0xfe, 0x80, 0x81],
+        )
+        .unwrap();
         std::fs::write(dir.join(".DS_Store"), [0x00, 0x00, 0x00, 0x01, 0xff]).unwrap();
         let list = list_all().expect("the list loads");
-        assert_eq!(list.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Kept"]);
+        assert_eq!(
+            list.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+            ["Kept"]
+        );
         drop(root);
     }
 
     #[test]
     fn os_litter_is_told_apart_from_data() {
         use std::ffi::OsStr;
-        for n in ["._p1.json", "._", ".DS_Store", "Thumbs.db", "desktop.ini", ".Spotlight-V100"] {
+        for n in [
+            "._p1.json",
+            "._",
+            ".DS_Store",
+            "Thumbs.db",
+            "desktop.ini",
+            ".Spotlight-V100",
+        ] {
             assert!(store::is_os_litter(OsStr::new(n)), "{n}");
         }
         for n in ["p1.json", "_p1.json", ".hidden.json", "DS_Store"] {
@@ -863,7 +899,10 @@ mod tests {
             "outer_width": 1920, "outer_height": 1039,
             "inner_width": 1920, "inner_height": 952
         });
-        assert!(fill_missing_window(id, win.clone()).unwrap(), "first call writes");
+        assert!(
+            fill_missing_window(id, win.clone()).unwrap(),
+            "first call writes"
+        );
 
         let back = load_raw(id).unwrap();
         assert_eq!(back.config.get("window"), Some(&win));
@@ -876,7 +915,10 @@ mod tests {
 
         // Second launch: the block is there, so nothing is rewritten.
         let other = serde_json::json!({"outer_width": 800, "outer_height": 600});
-        assert!(!fill_missing_window(id, other).unwrap(), "second call is a no-op");
+        assert!(
+            !fill_missing_window(id, other).unwrap(),
+            "second call is a no-op"
+        );
         assert_eq!(load_raw(id).unwrap().config.get("window"), Some(&win));
 
         // A block holding only `keep_focus` names no window either, so the size
@@ -894,7 +936,11 @@ mod tests {
         .unwrap();
         assert!(fill_missing_window(kf, win.clone()).unwrap(), "no size yet");
         let kept = load_raw(kf).unwrap();
-        let w = kept.config.get("window").and_then(|v| v.as_object()).unwrap();
+        let w = kept
+            .config
+            .get("window")
+            .and_then(|v| v.as_object())
+            .unwrap();
         assert_eq!(w.get("keep_focus"), Some(&serde_json::json!(true)));
         assert_eq!(w.get("outer_width"), Some(&serde_json::json!(1920)));
     }
@@ -908,8 +954,12 @@ mod tests {
         };
         assert!(m(r#"{"client_hints":{"mobile":true}}"#));
         assert!(m(r#"{"client_hints":{"platform":"Android"}}"#));
-        assert!(m(r#"{"navigator":{"user_agent":"Mozilla/5.0 (Linux; Android 15) Chrome"}}"#));
-        assert!(!m(r#"{"navigator":{"user_agent":"Mozilla/5.0 (Macintosh) Chrome"}}"#));
+        assert!(m(
+            r#"{"navigator":{"user_agent":"Mozilla/5.0 (Linux; Android 15) Chrome"}}"#
+        ));
+        assert!(!m(
+            r#"{"navigator":{"user_agent":"Mozilla/5.0 (Macintosh) Chrome"}}"#
+        ));
         // navigator.platform is the field that lies: Chrome for Android says
         // "Linux armv8l" there, and a desktop Linux profile says "Linux x86_64".
         assert!(!m(r#"{"navigator":{"platform":"Linux armv8l"}}"#));

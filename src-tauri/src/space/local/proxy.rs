@@ -186,7 +186,10 @@ pub(in crate::space) fn upsert_dedup(mut entry: ProxyEntry) -> Result<ProxyEntry
 /// on two sessions of one gateway are two proxies), which is why this is a
 /// separate door, opened only when the caller names the profile the proxy
 /// belongs to.
-pub(in crate::space) fn upsert_for_binding(mut entry: ProxyEntry, bound_id: Option<&str>) -> Result<ProxyEntry> {
+pub(in crate::space) fn upsert_for_binding(
+    mut entry: ProxyEntry,
+    bound_id: Option<&str>,
+) -> Result<ProxyEntry> {
     let mut s = load()?;
     if let Some(existing) = s.proxies.iter().find(|p| p.same_proxy(&entry)) {
         return Ok(existing.clone());
@@ -261,7 +264,9 @@ pub(crate) fn parse_host_port(raw: &str, default_port: u16) -> Option<(String, u
     };
     let ok = !host.is_empty()
         && host.len() <= 253
-        && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
         && !host.starts_with(['.', '-']);
     ok.then(|| (host.to_ascii_lowercase(), port))
 }
@@ -345,7 +350,9 @@ where
         } else {
             "the proxy wants a username and password"
         }),
-        other => anyhow::bail!("the proxy asked for login method {other:#x}, which we do not speak"),
+        other => {
+            anyhow::bail!("the proxy asked for login method {other:#x}, which we do not speak")
+        }
     }
     Ok(())
 }
@@ -385,7 +392,11 @@ async fn probe_inner(entry: &ProxyEntry) -> Result<u128> {
             .proxy(proxy)
             .build()?;
         let url = format!("https://{probe_host}:{probe_port}/");
-        let resp = client.head(&url).send().await.context("the proxy did not carry the request")?;
+        let resp = client
+            .head(&url)
+            .send()
+            .await
+            .context("the proxy did not carry the request")?;
         if !resp.status().is_success() && !resp.status().is_redirection() {
             anyhow::bail!("the proxy answered {} for {url}", resp.status());
         }
@@ -461,7 +472,9 @@ async fn probe_inner(entry: &ProxyEntry) -> Result<u128> {
                 let n = timeout(STEP_TIMEOUT, stream.read(&mut tmp))
                     .await
                     .context("the proxy accepted the connection but never answered CONNECT")??;
-                if n == 0 { break String::from_utf8_lossy(&buf).to_string(); }
+                if n == 0 {
+                    break String::from_utf8_lossy(&buf).to_string();
+                }
                 buf.extend_from_slice(&tmp[..n]);
                 if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 4096 {
                     break String::from_utf8_lossy(&buf).to_string();
@@ -530,7 +543,11 @@ fn parse_one(line: &str, default_kind: &ProxyKind) -> Option<ProxyEntry> {
         // the login itself — the engine is handed an encoded copy again on
         // the way out, and encoding something already encoded would send
         // "%252C" to the proxy.
-        (hp.to_string(), percent_decode_userinfo(un), percent_decode_userinfo(pw))
+        (
+            hp.to_string(),
+            percent_decode_userinfo(un),
+            percent_decode_userinfo(pw),
+        )
     } else {
         // host:port or host:port:user:pass
         let parts: Vec<&str> = rest.split(':').collect();
@@ -566,7 +583,11 @@ fn parse_one(line: &str, default_kind: &ProxyKind) -> Option<ProxyEntry> {
     Some(ProxyEntry {
         // ID assigned now so pre-save test snapshots key under the kept uuid.
         id: uuid::Uuid::new_v4().to_string(),
-        name: if name.is_empty() { format!("{host}:{port}") } else { name },
+        name: if name.is_empty() {
+            format!("{host}:{port}")
+        } else {
+            name
+        },
         kind,
         host: host.to_string(),
         port,
@@ -614,9 +635,13 @@ static STUN_ADDR: std::sync::OnceLock<(std::net::Ipv4Addr, u16)> = std::sync::On
 async fn resolve_stun_ipv4() -> Result<(std::net::Ipv4Addr, u16)> {
     // The operator's own (#157): Google's and Cloudflare's are unreachable
     // from some networks. Resolved each time, so a changed setting applies at once.
-    let custom = crate::settings::load().ok().and_then(|s| s.stun_server).filter(|h| !h.trim().is_empty());
+    let custom = crate::settings::load()
+        .ok()
+        .and_then(|s| s.stun_server)
+        .filter(|h| !h.trim().is_empty());
     if let Some(raw) = custom {
-        let (host, port) = parse_host_port(&raw, 3478).context("the STUN server in Settings is not a host[:port]")?;
+        let (host, port) = parse_host_port(&raw, 3478)
+            .context("the STUN server in Settings is not a host[:port]")?;
         let addrs = tokio::net::lookup_host((host.as_str(), port))
             .await
             .with_context(|| format!("the STUN server in Settings ({host}) did not resolve"))?;
@@ -878,7 +903,10 @@ pub fn rotation_set(id: &str, url: Option<&str>) -> Result<()> {
     match url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(u) => {
             let parsed = reqwest::Url::parse(u).context("the change-IP link is not a link")?;
-            anyhow::ensure!(matches!(parsed.scheme(), "http" | "https"), "the change-IP link must start with http:// or https://");
+            anyhow::ensure!(
+                matches!(parsed.scheme(), "http" | "https"),
+                "the change-IP link must start with http:// or https://"
+            );
             all.insert(id.to_string(), u.to_string());
         }
         None => {
@@ -909,13 +937,21 @@ pub struct ChangeIp {
 /// from `before`, for up to ~25 s: rotation finishes on the provider's side a
 /// little after it answers. A refusal is reported, not retried — rotation is
 /// rate-limited.
-pub(in crate::space) async fn change_ip(entry: &ProxyEntry, url: &str, before: Option<String>) -> Result<ChangeIp> {
+pub(in crate::space) async fn change_ip(
+    entry: &ProxyEntry,
+    url: &str,
+    before: Option<String>,
+) -> Result<ChangeIp> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .connect_timeout(std::time::Duration::from_secs(8))
         .no_proxy()
         .build()?;
-    let resp = client.get(url).send().await.context("the change-IP link did not answer")?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .context("the change-IP link did not answer")?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -941,7 +977,11 @@ pub(in crate::space) async fn change_ip(entry: &ProxyEntry, url: &str, before: O
         (None, Some(_)) => true,
         _ => false,
     };
-    Ok(ChangeIp { before, after, changed })
+    Ok(ChangeIp {
+        before,
+        after,
+        changed,
+    })
 }
 
 /// `entry` as a reqwest proxy; SOCKS5 resolves names on the proxy (`socks5h`).
@@ -1001,15 +1041,38 @@ fn custom_geo_url() -> Option<String> {
 fn parse_any_geo(text: &str, provider: &str) -> Result<GeoInfo> {
     let trimmed = text.trim();
     let Ok(root) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        let ip: std::net::IpAddr = trimmed.parse().map_err(|_| anyhow::anyhow!("{provider}: answered neither JSON nor an IP address"))?;
-        return Ok(GeoInfo { ip: ip.to_string(), country: String::new(), country_code: String::new(), region: String::new(), city: String::new(), isp: String::new(), timezone: String::new(), latitude: 0.0, longitude: 0.0, provider: provider.to_string() });
+        let ip: std::net::IpAddr = trimmed
+            .parse()
+            .map_err(|_| anyhow::anyhow!("{provider}: answered neither JSON nor an IP address"))?;
+        return Ok(GeoInfo {
+            ip: ip.to_string(),
+            country: String::new(),
+            country_code: String::new(),
+            region: String::new(),
+            city: String::new(),
+            isp: String::new(),
+            timezone: String::new(),
+            latitude: 0.0,
+            longitude: 0.0,
+            provider: provider.to_string(),
+        });
     };
     let v = root.get("data").filter(|d| d.is_object()).unwrap_or(&root);
     let s = |keys: &[&str]| -> String {
-        keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_str()).filter(|x| !x.is_empty())).unwrap_or("").to_string()
+        keys.iter()
+            .find_map(|k| v.get(*k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()))
+            .unwrap_or("")
+            .to_string()
     };
     let f = |keys: &[&str]| -> f64 {
-        keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|t| t.parse().ok())))).unwrap_or(0.0)
+        keys.iter()
+            .find_map(|k| {
+                v.get(*k).and_then(|x| {
+                    x.as_f64()
+                        .or_else(|| x.as_str().and_then(|t| t.parse().ok()))
+                })
+            })
+            .unwrap_or(0.0)
     };
     let mut code = s(&["country_code", "countryCode", "country_iso", "countryIso"]);
     let mut country = s(&["country_name", "countryName", "country"]);
@@ -1018,18 +1081,40 @@ fn parse_any_geo(text: &str, provider: &str) -> Result<GeoInfo> {
         country.clear();
     }
     let (mut latitude, mut longitude) = (f(&["latitude", "lat"]), f(&["longitude", "lon", "lng"]));
-    if let Some((a, b)) = v.get("loc").and_then(|x| x.as_str()).and_then(|l| l.split_once(',')) {
+    if let Some((a, b)) = v
+        .get("loc")
+        .and_then(|x| x.as_str())
+        .and_then(|l| l.split_once(','))
+    {
         latitude = a.trim().parse().unwrap_or(latitude);
         longitude = b.trim().parse().unwrap_or(longitude);
     }
-    let timezone = v.get("timezone").and_then(|t| t.as_str().map(str::to_string).or_else(|| t.get("id").and_then(|x| x.as_str()).map(str::to_string)))
+    let timezone = v
+        .get("timezone")
+        .and_then(|t| {
+            t.as_str()
+                .map(str::to_string)
+                .or_else(|| t.get("id").and_then(|x| x.as_str()).map(str::to_string))
+        })
         .unwrap_or_else(|| s(&["time_zone"]));
     let mut isp = s(&["isp", "org", "organization", "asn_org"]);
     if isp.is_empty() {
-        isp = v.get("connection").and_then(|c| c.get("isp")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        isp = v
+            .get("connection")
+            .and_then(|c| c.get("isp"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
     }
     Ok(GeoInfo {
-        ip: s(&["ip", "query", "ip_address", "ipAddress", "origin", "clientIp"]),
+        ip: s(&[
+            "ip",
+            "query",
+            "ip_address",
+            "ipAddress",
+            "origin",
+            "clientIp",
+        ]),
         country,
         country_code: code,
         region: s(&["region", "regionName", "region_name", "province", "state"]),
@@ -1044,10 +1129,18 @@ fn parse_any_geo(text: &str, provider: &str) -> Result<GeoInfo> {
 
 /// Probe geo through `entry` if Some, else direct. Tries the chosen provider,
 /// then the others; the error carries what each one said.
-pub async fn geo_check_via(entry: Option<&ProxyEntry>, provider_override: Option<String>) -> Result<GeoInfo> {
+pub async fn geo_check_via(
+    entry: Option<&ProxyEntry>,
+    provider_override: Option<String>,
+) -> Result<GeoInfo> {
     let chosen = provider_override
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| settings::load().ok().and_then(|s| s.geo_checker).unwrap_or_else(|| "ip-api.com".into()));
+        .unwrap_or_else(|| {
+            settings::load()
+                .ok()
+                .and_then(|s| s.geo_checker)
+                .unwrap_or_else(|| "ip-api.com".into())
+        });
 
     // One provider at a time, each with its own timeout, cost up to three
     // timeouts in a row — half a minute of waiting before the test could even
@@ -1126,7 +1219,13 @@ async fn geo_check_one(entry: Option<&ProxyEntry>, provider: &str) -> Result<Geo
     let client = builder.build()?;
 
     if custom.is_some() {
-        let text = client.get(url).send().await?.error_for_status()?.text().await?;
+        let text = client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
         let info = parse_any_geo(&text, provider)?;
         if info.ip.trim().is_empty() {
             anyhow::bail!("{provider}: answered without an IP");
@@ -1138,9 +1237,7 @@ async fn geo_check_one(entry: Option<&ProxyEntry>, provider: &str) -> Result<Geo
     let s = |v: &serde_json::Value, k: &str| {
         v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
-    let f = |v: &serde_json::Value, k: &str| {
-        v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0)
-    };
+    let f = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
     // A provider over its quota answers 200 with an error object. Parsed as a
     // success that gave no fields, it fell through as "no location" and the
     // chain stopped trying — the profile then launched on the host's clock.
@@ -1191,8 +1288,18 @@ async fn geo_check_one(entry: Option<&ProxyEntry>, provider: &str) -> Result<Geo
             country_code: s(&body, "country_code"),
             region: s(&body, "region"),
             city: s(&body, "city"),
-            isp: body.get("connection").and_then(|c| c.get("isp")).and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            timezone: body.get("timezone").and_then(|t| t.get("id")).and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            isp: body
+                .get("connection")
+                .and_then(|c| c.get("isp"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            timezone: body
+                .get("timezone")
+                .and_then(|t| t.get("id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             latitude: f(&body, "latitude"),
             longitude: f(&body, "longitude"),
             provider: provider.to_string(),
@@ -1364,7 +1471,6 @@ fn with_history<T>(f: impl FnOnce(&mut HistoryStore) -> Result<(T, bool)>) -> Re
     Ok(out)
 }
 
-
 /// Persist a test result; same-IP entries collapse, capped at 50 per proxy.
 fn record_test(proxy_id: &str, mut snap: TestSnapshot) -> Result<TestSnapshot> {
     if proxy_id.is_empty() {
@@ -1373,11 +1479,19 @@ fn record_test(proxy_id: &str, mut snap: TestSnapshot) -> Result<TestSnapshot> {
         }
         return Ok(snap);
     }
-    with_history(|hs| Ok((keep_test(hs.by_proxy.entry(proxy_id.into()).or_default(), snap), true)))
+    with_history(|hs| {
+        Ok((
+            keep_test(hs.by_proxy.entry(proxy_id.into()).or_default(), snap),
+            true,
+        ))
+    })
 }
 
 /// Add a result to one proxy's history; answers it as kept.
-pub(in crate::space) fn keep_test(entries: &mut Vec<TestSnapshot>, mut snap: TestSnapshot) -> TestSnapshot {
+pub(in crate::space) fn keep_test(
+    entries: &mut Vec<TestSnapshot>,
+    mut snap: TestSnapshot,
+) -> TestSnapshot {
     // Same address as last time: one entry for the whole stay, kept at
     // the newest reading. Everything the test just measured is written,
     // not only the latency — the location, the operator and the source
@@ -1402,12 +1516,20 @@ pub(in crate::space) fn keep_test(entries: &mut Vec<TestSnapshot>, mut snap: Tes
 }
 
 pub(in crate::space) fn history(proxy_id: &str) -> Result<Vec<TestSnapshot>> {
-    with_history(|hs| Ok((hs.by_proxy.get(proxy_id).cloned().unwrap_or_default(), false)))
+    with_history(|hs| {
+        Ok((
+            hs.by_proxy.get(proxy_id).cloned().unwrap_or_default(),
+            false,
+        ))
+    })
 }
 
 pub(in crate::space) fn latest_test(proxy_id: &str) -> Option<TestSnapshot> {
     with_history(|hs| {
-        Ok((hs.by_proxy.get(proxy_id).and_then(|v| v.last().cloned()), false))
+        Ok((
+            hs.by_proxy.get(proxy_id).and_then(|v| v.last().cloned()),
+            false,
+        ))
     })
     .ok()
     .flatten()
@@ -1464,8 +1586,7 @@ pub(in crate::space) async fn measure(entry: &ProxyEntry) -> TestSnapshot {
         let res = geo_check(entry, None).await;
         (res, started.elapsed().as_millis())
     };
-    let (tcp_res, udp_res, (geo_res, geo_ms)) =
-        tokio::join!(probe(entry), udp_fut, geo_fut);
+    let (tcp_res, udp_res, (geo_res, geo_ms)) = tokio::join!(probe(entry), udp_fut, geo_fut);
 
     // An answer from a geo service IS the proxy working: the request went out
     // through it and came back. So its address is kept whenever it arrived,
@@ -1480,13 +1601,29 @@ pub(in crate::space) async fn measure(entry: &ProxyEntry) -> TestSnapshot {
     };
     let (ip, country_code, country, region, city, isp, tz, lat, lng, provider) = match &geo_res {
         Ok(g) => (
-            g.ip.clone(), g.country_code.clone(), g.country.clone(),
-            g.region.clone(), g.city.clone(), g.isp.clone(),
-            g.timezone.clone(), g.latitude, g.longitude, g.provider.clone(),
+            g.ip.clone(),
+            g.country_code.clone(),
+            g.country.clone(),
+            g.region.clone(),
+            g.city.clone(),
+            g.isp.clone(),
+            g.timezone.clone(),
+            g.latitude,
+            g.longitude,
+            g.provider.clone(),
         ),
-        Err(_) => (String::new(), String::new(), String::new(),
-                   String::new(), String::new(), String::new(),
-                   String::new(), 0.0, 0.0, String::new()),
+        Err(_) => (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            0.0,
+            0.0,
+            String::new(),
+        ),
     };
 
     TestSnapshot {
@@ -1504,10 +1641,10 @@ pub(in crate::space) async fn measure(entry: &ProxyEntry) -> TestSnapshot {
         // Set whenever the proxy carried something, so "reached" always comes
         // with a time: the probe's own round trip, or the geo request's when
         // only that one got through.
-        tcp_ms: tcp_res.ok().or(if geo_res.is_ok() { Some(geo_ms) } else { None }),
-        udp_ms: udp_res
-            .as_ref()
-            .and_then(|r| r.as_ref().ok().copied()),
+        tcp_ms: tcp_res
+            .ok()
+            .or(if geo_res.is_ok() { Some(geo_ms) } else { None }),
+        udp_ms: udp_res.as_ref().and_then(|r| r.as_ref().ok().copied()),
         udp_error: udp_res
             .as_ref()
             .and_then(|r| r.as_ref().err().map(|e| e.to_string())),
@@ -1583,7 +1720,10 @@ mod tests {
         let added = add_new(&mut store, parse_bulk(text, ProxyKind::Socks5));
         assert_eq!(added, 3);
         let passwords: Vec<&str> = store.iter().map(|p| p.password.as_str()).collect();
-        assert_eq!(passwords, ["pw_session-a1", "pw_session-b2", "pw_session-c3"]);
+        assert_eq!(
+            passwords,
+            ["pw_session-a1", "pw_session-b2", "pw_session-c3"]
+        );
     }
 
     #[test]
@@ -1634,8 +1774,12 @@ mod tests {
         // the API calls: the bound entry is the one that moves.
         let slot = store
             .iter_mut()
-            .find(|p| p.id == bound && p.host == second.host && p.port == second.port
-                      && p.username == second.username)
+            .find(|p| {
+                p.id == bound
+                    && p.host == second.host
+                    && p.port == second.port
+                    && p.username == second.username
+            })
             .expect("the bound proxy is still there");
         slot.password = second.password.clone();
 
@@ -1672,8 +1816,8 @@ mod tests {
     /// A password may contain "@"; a host never does.
     #[test]
     fn the_host_is_whatever_follows_the_last_at() {
-        let p = parse_one("user:p@ssw0rd@gate.example.com:1080", &ProxyKind::Socks5)
-            .expect("parses");
+        let p =
+            parse_one("user:p@ssw0rd@gate.example.com:1080", &ProxyKind::Socks5).expect("parses");
         assert_eq!(p.host, "gate.example.com");
         assert_eq!(p.port, 1080);
         assert_eq!(p.username, "user");
@@ -1696,7 +1840,10 @@ mod tests {
         for rep in [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08] {
             let text = socks5_reply_text(rep);
             assert!(!text.is_empty());
-            assert!(!text.contains("rep="), "{rep:#x} still reads like a protocol dump: {text}");
+            assert!(
+                !text.contains("rep="),
+                "{rep:#x} still reads like a protocol dump: {text}"
+            );
         }
         assert!(socks5_reply_text(0x02).contains("ruleset"));
         // An unknown code still says something, with the number to go on.
@@ -1759,7 +1906,9 @@ mod tests {
             let mut rest = vec![0u8; head[4] as usize + 2];
             sock.read_exact(&mut rest).await.unwrap();
             // "Not allowed by ruleset" — a spent account to the letter.
-            sock.write_all(&[0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await.unwrap();
+            sock.write_all(&[0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .await
+                .unwrap();
         });
 
         let mut e = entry("127.0.0.1:1");
@@ -1771,11 +1920,31 @@ mod tests {
 
     #[test]
     fn probe_and_stun_hosts_as_typed() {
-        assert_eq!(parse_host_port("www.baidu.com", 443), Some(("www.baidu.com".into(), 443)));
-        assert_eq!(parse_host_port(" https://WWW.Baidu.com:8443/path ", 443), Some(("www.baidu.com".into(), 8443)));
-        assert_eq!(parse_host_port("stun.miwifi.com:3478", 3478), Some(("stun.miwifi.com".into(), 3478)));
-        assert_eq!(parse_host_port("1.2.3.4", 3478), Some(("1.2.3.4".into(), 3478)));
-        for bad in ["", ":443", "host:0", "host:99999", "bad host", "-x.com", "a/b@c"] {
+        assert_eq!(
+            parse_host_port("www.baidu.com", 443),
+            Some(("www.baidu.com".into(), 443))
+        );
+        assert_eq!(
+            parse_host_port(" https://WWW.Baidu.com:8443/path ", 443),
+            Some(("www.baidu.com".into(), 8443))
+        );
+        assert_eq!(
+            parse_host_port("stun.miwifi.com:3478", 3478),
+            Some(("stun.miwifi.com".into(), 3478))
+        );
+        assert_eq!(
+            parse_host_port("1.2.3.4", 3478),
+            Some(("1.2.3.4".into(), 3478))
+        );
+        for bad in [
+            "",
+            ":443",
+            "host:0",
+            "host:99999",
+            "bad host",
+            "-x.com",
+            "a/b@c",
+        ] {
             assert_eq!(parse_host_port(bad, 443), None, "{bad:?}");
         }
     }
@@ -1784,11 +1953,22 @@ mod tests {
     fn any_geo_shape_is_read() {
         let ipinfo = r#"{"ip":"1.2.3.4","city":"Shenzhen","region":"Guangdong","country":"CN","loc":"22.5,114.06","org":"AS4134 Chinanet","timezone":"Asia/Shanghai"}"#;
         let g = parse_any_geo(ipinfo, "custom").unwrap();
-        assert_eq!((g.ip.as_str(), g.country_code.as_str(), g.city.as_str(), g.timezone.as_str()), ("1.2.3.4", "CN", "Shenzhen", "Asia/Shanghai"));
+        assert_eq!(
+            (
+                g.ip.as_str(),
+                g.country_code.as_str(),
+                g.city.as_str(),
+                g.timezone.as_str()
+            ),
+            ("1.2.3.4", "CN", "Shenzhen", "Asia/Shanghai")
+        );
         assert_eq!((g.latitude, g.longitude), (22.5, 114.06));
         let nested = r#"{"code":0,"data":{"ip":"5.6.7.8","country_name":"China","country_code":"CN","timezone":{"id":"Asia/Shanghai"}}}"#;
         let g = parse_any_geo(nested, "custom").unwrap();
-        assert_eq!((g.ip.as_str(), g.country.as_str(), g.timezone.as_str()), ("5.6.7.8", "China", "Asia/Shanghai"));
+        assert_eq!(
+            (g.ip.as_str(), g.country.as_str(), g.timezone.as_str()),
+            ("5.6.7.8", "China", "Asia/Shanghai")
+        );
         let g = parse_any_geo(" 9.9.9.9\n", "custom").unwrap();
         assert_eq!((g.ip.as_str(), g.country_code.as_str()), ("9.9.9.9", ""));
         assert!(parse_any_geo("<html>blocked</html>", "custom").is_err());

@@ -23,7 +23,9 @@ pub struct ShellState {
 }
 
 pub fn root() -> Result<PathBuf> {
-    Ok(dirs::data_local_dir().context("OS local data dir unavailable")?.join("LotusProxy"))
+    Ok(dirs::data_local_dir()
+        .context("OS local data dir unavailable")?
+        .join("LotusProxy"))
 }
 
 pub fn hub_data_dir() -> Result<PathBuf> {
@@ -109,19 +111,32 @@ mod tests {
     use super::*;
 
     fn agent(authorization: &str) -> AgentAuth<'_> {
-        AgentAuth { authorization, authorization_detail: "", authorization_resolved: true, pending_webview_clear: false, pending_grant: false, pending_logout: false }
+        AgentAuth {
+            authorization,
+            authorization_detail: "",
+            authorization_resolved: true,
+            pending_webview_clear: false,
+            pending_grant: false,
+            pending_logout: false,
+        }
     }
 
     #[test]
     fn a_latched_clear_wipes_whatever_the_agent_says() {
-        let s = ShellState { pending_webview_clear: true, ..Default::default() };
+        let s = ShellState {
+            pending_webview_clear: true,
+            ..Default::default()
+        };
         assert!(must_wipe(&s, None));
         assert!(must_wipe(&s, Some(&agent("authorized"))));
     }
 
     #[test]
     fn the_agents_own_latch_wipes() {
-        let a = AgentAuth { pending_webview_clear: true, ..agent("signed_out") };
+        let a = AgentAuth {
+            pending_webview_clear: true,
+            ..agent("signed_out")
+        };
         assert!(must_wipe(&ShellState::default(), Some(&a)));
     }
 
@@ -185,7 +200,10 @@ mod tests {
     #[test]
     fn a_first_run_or_half_signed_in_view_is_kept() {
         // Never bound: the IAM login of a user whose device grant failed stays.
-        assert!(!must_wipe(&ShellState::default(), Some(&agent("signed_out"))));
+        assert!(!must_wipe(
+            &ShellState::default(),
+            Some(&agent("signed_out"))
+        ));
         assert!(!must_wipe(&ShellState::default(), None));
     }
 }

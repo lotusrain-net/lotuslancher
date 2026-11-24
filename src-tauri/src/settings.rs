@@ -152,7 +152,9 @@ fn decode_text(bytes: &[u8]) -> String {
         return String::from_utf16_lossy(&units);
     }
     let body = String::from_utf8_lossy(bytes).into_owned();
-    body.strip_prefix('\u{feff}').map(str::to_owned).unwrap_or(body)
+    body.strip_prefix('\u{feff}')
+        .map(str::to_owned)
+        .unwrap_or(body)
 }
 
 /// The message for the UI banner, or None while the file reads fine.
@@ -177,7 +179,10 @@ pub fn load() -> Result<Settings> {
         Err(e) => {
             // Defaults for this run only: the file stays as it is, and `save`
             // keeps a copy of it before writing over it.
-            let msg = format!("{} could not be read ({e}); running on defaults", path.display());
+            let msg = format!(
+                "{} could not be read ({e}); running on defaults",
+                path.display()
+            );
             eprintln!("[launcher] settings: {msg}");
             if let Ok(mut g) = LOAD_ERROR.lock() {
                 *g = Some(msg);
@@ -261,7 +266,10 @@ pub fn save(s: &Settings) -> Result<()> {
         if let Err(e) = fs::rename(&path, &backup) {
             eprintln!("[launcher] settings: could not keep a copy of the old file: {e}");
         } else {
-            eprintln!("[launcher] settings: kept the unreadable file as {}", backup.display());
+            eprintln!(
+                "[launcher] settings: kept the unreadable file as {}",
+                backup.display()
+            );
         }
     }
     let body = serde_json::to_string_pretty(s)?;
@@ -280,7 +288,12 @@ fn write_private(path: &std::path::Path, body: &[u8]) -> Result<()> {
     {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
         f.set_permissions(fs::Permissions::from_mode(0o600))?;
         f.write_all(body)?;
         return Ok(());

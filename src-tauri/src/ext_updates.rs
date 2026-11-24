@@ -14,7 +14,10 @@ const RETRY: Duration = Duration::from_secs(30 * 60);
 /// The installed engine's version; None for a browser of the person's own,
 /// whose version the launcher does not know (the bundle's stands in then).
 pub fn engine() -> Option<String> {
-    let own = crate::settings::load().ok().and_then(|s| s.browser_path).is_some_and(|p| !p.trim().is_empty());
+    let own = crate::settings::load()
+        .ok()
+        .and_then(|s| s.browser_path)
+        .is_some_and(|p| !p.trim().is_empty());
     if own {
         return None;
     }
@@ -23,11 +26,16 @@ pub fn engine() -> Option<String> {
 
 /// On, and a proxy chosen for the Web Store: without one the timer stays quiet (#154).
 fn enabled() -> bool {
-    crate::settings::load().map(|s| s.ext_update_check).unwrap_or(true) && space::extensions::store_proxy_chosen()
+    crate::settings::load()
+        .map(|s| s.ext_update_check)
+        .unwrap_or(true)
+        && space::extensions::store_proxy_chosen()
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// 5 h give or take a tenth, so launchers do not all ask at once.
@@ -39,7 +47,10 @@ fn interval() -> u64 {
 
 /// When to try again after `failures` checks in a row got no answer.
 fn backoff(failures: u32) -> u64 {
-    RETRY.as_secs().saturating_mul(1 << failures.saturating_sub(1).min(4)).min(EVERY.as_secs())
+    RETRY
+        .as_secs()
+        .saturating_mul(1 << failures.saturating_sub(1).min(4))
+        .min(EVERY.as_secs())
 }
 
 /// The timer; wall-clock based, so a computer that slept checks when it wakes.
@@ -64,13 +75,19 @@ pub fn start() {
                 Ok(news) => {
                     failures = 0;
                     if !news.is_empty() {
-                        crate::notify_event("extension-updates:news", serde_json::to_value(&news).unwrap_or_default())
+                        crate::notify_event(
+                            "extension-updates:news",
+                            serde_json::to_value(&news).unwrap_or_default(),
+                        )
                     }
                 }
                 Err(e) => {
                     failures += 1;
                     due = now() + backoff(failures);
-                    eprintln!("[extensions] update check: {e}; tried again in {} min", backoff(failures) / 60);
+                    eprintln!(
+                        "[extensions] update check: {e}; tried again in {} min",
+                        backoff(failures) / 60
+                    );
                 }
             }
         }
@@ -79,7 +96,9 @@ pub fn start() {
 
 /// The Check button: asks now (or waits for a check under way) and returns
 /// the updates. A team's extensions are not checked yet.
-pub async fn check_now(t: &space::Ticket) -> Result<Vec<space::extensions::ExtensionUpdate>, String> {
+pub async fn check_now(
+    t: &space::Ticket,
+) -> Result<Vec<space::extensions::ExtensionUpdate>, String> {
     if t.team().is_some() {
         return Ok(Vec::new());
     }

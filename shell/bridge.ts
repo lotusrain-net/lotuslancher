@@ -44,7 +44,12 @@ export type Prefs = {
   use_system_proxy_for_control: boolean;
 };
 
-export type Progress = { percent?: number } | null;
+export type Progress = {
+  percent?: number;
+  route?: "system_proxy" | "direct";
+  attempt?: number;
+  max_attempts?: number;
+} | null;
 
 const HAS_BRIDGE = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -234,7 +239,7 @@ export function presenceTime(value?: string | null) {
 
 export function act(name: string, snap: Snapshot | null) {
   if (name === "repair") return invoke("shell_action", { name: "probe" }).then(() => invoke("shell_action", { name: "retry_cleanup" }));
-  if (name === "driver_retry" && snap && !snap.engine_ready) {
+  if (name === "driver_retry" && snap) {
     return invoke("shell_action", { name: "driver_retry" }).then(() => invoke("shell_install_engine"));
   }
   return invoke("shell_action", { name });

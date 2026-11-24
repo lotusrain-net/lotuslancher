@@ -15,9 +15,9 @@ use super::error::{CmdError, Doing, Need};
 use super::extensions::ExtensionEntry;
 use super::local;
 use super::local::extensions::source::SourceRef;
+use super::local::templates::{ProfileTemplate, TemplateState};
 use super::perm::{self, Create, Delete, Edit, On};
 use super::remote::{self, ItemRow, Package};
-use super::local::templates::{ProfileTemplate, TemplateState};
 use super::tags::Tag;
 use super::write::client;
 use super::{cache, secrets, Ticket};
@@ -29,8 +29,22 @@ fn missing(what: &str, id: &str) -> CmdError {
     CmdError::Missing(format!("no {what} {id} in this team"))
 }
 
-fn refused(e: TeamError, right: &'static str, what: &'static str, id: &str, had: Option<u64>) -> CmdError {
-    CmdError::from_team(e, &Doing { need: Need { right, on: "team" }, what, id, had })
+fn refused(
+    e: TeamError,
+    right: &'static str,
+    what: &'static str,
+    id: &str,
+    had: Option<u64>,
+) -> CmdError {
+    CmdError::from_team(
+        e,
+        &Doing {
+            need: Need { right, on: "team" },
+            what,
+            id,
+            had,
+        },
+    )
 }
 
 /// The item `id` of `kind` as `data`: made when none is held, else changed from
@@ -48,7 +62,14 @@ async fn put(
     base: Option<u64>,
 ) -> Result<ItemRow, CmdError> {
     let held = cache::item(team, kind, id);
-    doors::clear(door, team, &Ask { new: held.is_none(), ..Default::default() })?;
+    doors::clear(
+        door,
+        team,
+        &Ask {
+            new: held.is_none(),
+            ..Default::default()
+        },
+    )?;
     let c = client(team)?;
     let name = remote::item_name(name);
     let w = match &held {
@@ -74,7 +95,14 @@ async fn put(
 }
 
 /// To the team's trash, from the revision held.
-async fn remove(door: Door, t: &Ticket, team: &str, kind: &str, what: &'static str, id: &str) -> Result<(), CmdError> {
+async fn remove(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    kind: &str,
+    what: &'static str,
+    id: &str,
+) -> Result<(), CmdError> {
     let row = cache::item(team, kind, id).ok_or_else(|| missing(what, id))?;
     doors::clear(door, team, &Ask::default())?;
     let pass = perm::team_write::<Delete>(team, On::Team)?;
@@ -98,7 +126,18 @@ pub async fn save_bookmark(door: Door, t: &Ticket, team: &str, b: Bookmark) -> R
     if b.id.is_empty() {
         b.id = uuid::Uuid::new_v4().to_string();
     }
-    put(door, t, team, "bookmark", "bookmark", &b.id, &b.title, remote::item_data(&b), None).await?;
+    put(
+        door,
+        t,
+        team,
+        "bookmark",
+        "bookmark",
+        &b.id,
+        &b.title,
+        remote::item_data(&b),
+        None,
+    )
+    .await?;
     Ok(b)
 }
 
@@ -112,11 +151,37 @@ pub async fn delete_bookmark(door: Door, t: &Ticket, team: &str, id: &str) -> Re
 pub async fn save_tag(door: Door, t: &Ticket, team: &str, tag: Tag) -> Result<Tag> {
     let mut held = cache::tags(team);
     let tag = held.upsert(tag, None)?;
-    match put(door, t, team, "tag", "tag", &tag.id, &tag.name, remote::item_data(&tag), None).await {
+    match put(
+        door,
+        t,
+        team,
+        "tag",
+        "tag",
+        &tag.id,
+        &tag.name,
+        remote::item_data(&tag),
+        None,
+    )
+    .await
+    {
         Ok(_) => Ok(tag),
         Err(e) if in_trash(&e) && cache::item(team, "tag", &tag.id).is_none() => {
-            let tag = Tag { id: format!("t-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), ..tag };
-            put(door, t, team, "tag", "tag", &tag.id, &tag.name, remote::item_data(&tag), None).await?;
+            let tag = Tag {
+                id: format!("t-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
+                ..tag
+            };
+            put(
+                door,
+                t,
+                team,
+                "tag",
+                "tag",
+                &tag.id,
+                &tag.name,
+                remote::item_data(&tag),
+                None,
+            )
+            .await?;
             Ok(tag)
         }
         Err(e) => Err(e.into()),
@@ -130,29 +195,64 @@ pub async fn delete_tag(door: Door, t: &Ticket, team: &str, id: &str) -> Result<
 
 // ---- profile templates: by name, one of them the team's default ----
 
-async fn put_template(door: Door, t: &Ticket, team: &str, tpl: &ProfileTemplate) -> Result<ItemRow, CmdError> {
-    put(door, t, team, "template", "profile template", &tpl.id, &tpl.name, remote::item_data(tpl), None).await
+async fn put_template(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    tpl: &ProfileTemplate,
+) -> Result<ItemRow, CmdError> {
+    put(
+        door,
+        t,
+        team,
+        "template",
+        "profile template",
+        &tpl.id,
+        &tpl.name,
+        remote::item_data(tpl),
+        None,
+    )
+    .await
 }
 
 /// A deleted template's id stays taken in the team's trash: one put back gets a new id.
 /// Made the default, it takes the mark from the others this member may change.
-pub async fn save_template(door: Door, t: &Ticket, team: &str, tpl: ProfileTemplate) -> Result<ProfileTemplate> {
-    let mut held = TemplateState { templates: cache::templates(team) };
+pub async fn save_template(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    tpl: ProfileTemplate,
+) -> Result<ProfileTemplate> {
+    let mut held = TemplateState {
+        templates: cache::templates(team),
+    };
     let tpl = held.upsert(tpl)?;
     let tpl = match put_template(door, t, team, &tpl).await {
         Ok(_) => tpl,
         Err(e) if in_trash(&e) && cache::item(team, "template", &tpl.id).is_none() => {
-            let tpl = ProfileTemplate { id: format!("pt-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), ..tpl };
+            let tpl = ProfileTemplate {
+                id: format!("pt-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
+                ..tpl
+            };
             put_template(door, t, team, &tpl).await?;
             tpl
         }
         Err(e) => return Err(e.into()),
     };
     if tpl.is_default {
-        for other in cache::templates(team).into_iter().filter(|o| o.is_default && o.id != tpl.id) {
-            let other = ProfileTemplate { is_default: false, ..other };
+        for other in cache::templates(team)
+            .into_iter()
+            .filter(|o| o.is_default && o.id != tpl.id)
+        {
+            let other = ProfileTemplate {
+                is_default: false,
+                ..other
+            };
             if let Err(e) = put_template(door, t, team, &other).await {
-                eprintln!("[launcher] template {} kept its default mark: {e}", other.id);
+                eprintln!(
+                    "[launcher] template {} kept its default mark: {e}",
+                    other.id
+                );
             }
         }
     }
@@ -172,7 +272,13 @@ pub fn projects(team: &str) -> Vec<Project> {
     all
 }
 
-async fn put_project(door: Door, t: &Ticket, team: &str, mut p: Project, base: Option<u64>) -> Result<Project> {
+async fn put_project(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    mut p: Project,
+    base: Option<u64>,
+) -> Result<Project> {
     p.updated_at = local::automation::stamp();
     p.revision = None;
     p.run.profiles.clear();
@@ -180,9 +286,23 @@ async fn put_project(door: Door, t: &Ticket, team: &str, mut p: Project, base: O
     let shown = p.clone();
     let values = secrets::take(&mut p);
     let id = p.id.clone();
-    let row = put(door, t, team, "automation", "project", &id, &p.name, remote::item_data(&p), base).await?;
+    let row = put(
+        door,
+        t,
+        team,
+        "automation",
+        "project",
+        &id,
+        &p.name,
+        remote::item_data(&p),
+        base,
+    )
+    .await?;
     secrets::keep(team, &id, values)?;
-    Ok(Project { revision: Some(row.revision), ..shown })
+    Ok(Project {
+        revision: Some(row.revision),
+        ..shown
+    })
 }
 
 pub async fn create_project(door: Door, t: &Ticket, team: &str, name: &str) -> Result<Project> {
@@ -199,13 +319,23 @@ pub async fn save_project(door: Door, t: &Ticket, team: &str, p: Project) -> Res
 }
 
 pub async fn duplicate_project(door: Door, t: &Ticket, team: &str, id: &str) -> Result<Project> {
-    let src = projects(team).into_iter().find(|p| p.id == id).ok_or_else(|| missing("project", id))?;
+    let src = projects(team)
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| missing("project", id))?;
     put_project(door, t, team, local::automation::copy_of(src), None).await
 }
 
 /// The door first: modules are installed only for an import that may happen.
 pub async fn import_project(door: Door, t: &Ticket, team: &str, bundle: Bundle) -> Result<Project> {
-    doors::clear(door, team, &Ask { new: true, ..Default::default() })?;
+    doors::clear(
+        door,
+        team,
+        &Ask {
+            new: true,
+            ..Default::default()
+        },
+    )?;
     let p = local::automation::unbundle(bundle)?;
     put_project(door, t, team, p, None).await
 }
@@ -223,7 +353,8 @@ struct Stage(PathBuf);
 
 impl Stage {
     fn new() -> Result<Stage> {
-        let p = std::env::temp_dir().join(format!("shardx-team-ext-{}", uuid::Uuid::new_v4().simple()));
+        let p =
+            std::env::temp_dir().join(format!("shardx-team-ext-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&p)?;
         Ok(Stage(p))
     }
@@ -236,12 +367,20 @@ impl Drop for Stage {
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Unpacked and read in a stage, sent up as an item and its package; never
 /// kept in this machine's extension library.
-pub async fn import_extension(door: Door, t: &Ticket, team: &str, src: &Path) -> Result<ExtensionEntry> {
+pub async fn import_extension(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    src: &Path,
+) -> Result<ExtensionEntry> {
     import_extension_as(door, t, team, src, local::extensions::Want::file()).await
 }
 
@@ -249,46 +388,89 @@ pub async fn import_extension(door: Door, t: &Ticket, team: &str, src: &Path) ->
 /// carry the store's key, so the same id.
 fn refuse_same_item(team: &str, src: Option<&SourceRef>) -> Result<()> {
     let Some(src) = src else { return Ok(()) };
-    match cache::extensions(team).into_iter().find(|e| e.source.as_ref() == Some(src)) {
+    match cache::extensions(team)
+        .into_iter()
+        .find(|e| e.source.as_ref() == Some(src))
+    {
         Some(e) => Err(local::extensions::already_in_library(&e.id, &e.version, false).into()),
         None => Ok(()),
     }
 }
 
-async fn import_extension_as(door: Door, t: &Ticket, team: &str, src: &Path, want: local::extensions::Want) -> Result<ExtensionEntry> {
-    doors::clear(door, team, &Ask { new: true, ..Default::default() })?;
+async fn import_extension_as(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    src: &Path,
+    want: local::extensions::Want,
+) -> Result<ExtensionEntry> {
+    doors::clear(
+        door,
+        team,
+        &Ask {
+            new: true,
+            ..Default::default()
+        },
+    )?;
     perm::team_write::<Create>(team, On::Team)?;
     let stage = Stage::new()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let (from, files, zip, at) = (src.to_path_buf(), stage.0.join("files"), stage.0.join("package.zip"), id.clone());
-    let (mut entry, size) = tokio::task::spawn_blocking(move || -> Result<(ExtensionEntry, u64)> {
-        let origin = local::extensions::unpack_into(&from, &files, &want)?;
-        let mut entry = local::extensions::read_at(&files, &at)?;
-        // Where it came from goes up with the item; how it was learned stays here.
-        entry.source = origin.source;
-        let size = local::extensions::zip_dir(&local::extensions::manifest_root(&files), &zip)?;
-        Ok((entry, size))
-    })
-    .await??;
+    let (from, files, zip, at) = (
+        src.to_path_buf(),
+        stage.0.join("files"),
+        stage.0.join("package.zip"),
+        id.clone(),
+    );
+    let (mut entry, size) =
+        tokio::task::spawn_blocking(move || -> Result<(ExtensionEntry, u64)> {
+            let origin = local::extensions::unpack_into(&from, &files, &want)?;
+            let mut entry = local::extensions::read_at(&files, &at)?;
+            // Where it came from goes up with the item; how it was learned stays here.
+            entry.source = origin.source;
+            let size = local::extensions::zip_dir(&local::extensions::manifest_root(&files), &zip)?;
+            Ok((entry, size))
+        })
+        .await??;
     refuse_same_item(team, entry.source.as_ref())?;
     if size > PACKAGE_MAX {
-        bail!("this extension is {} MB packed; a team keeps extensions up to {} MB", size >> 20, PACKAGE_MAX >> 20);
+        bail!(
+            "this extension is {} MB packed; a team keeps extensions up to {} MB",
+            size >> 20,
+            PACKAGE_MAX >> 20
+        );
     }
     entry.path = String::new();
     entry.added_at = format!("@{}", now());
-    let row = put(door, t, team, "extension", "extension", &id, &entry.name, remote::item_data(&entry), None).await?;
+    let row = put(
+        door,
+        t,
+        team,
+        "extension",
+        "extension",
+        &id,
+        &entry.name,
+        remote::item_data(&entry),
+        None,
+    )
+    .await?;
     let c = client(team)?;
     let pass = perm::team_write::<Create>(team, On::Team)?;
     match remote::put_package(&c, &pass, &id, &stage.0.join("package.zip")).await {
         Ok(w) => {
-            let package = Some(Package { size: w.size, package_rev: w.package_rev });
+            let package = Some(Package {
+                size: w.size,
+                package_rev: w.package_rev,
+            });
             cache::wrote_item(team, "extension", ItemRow { package, ..row });
             Ok(entry)
         }
         Err(e) => {
             // Without its files it is of no use: taken back where the rights allow.
             if let Ok(del) = perm::team_write::<Delete>(team, On::Team) {
-                if remote::delete_item(&c, &del, "extension", &id, row.revision).await.is_ok() {
+                if remote::delete_item(&c, &del, "extension", &id, row.revision)
+                    .await
+                    .is_ok()
+                {
                     cache::dropped_item(team, "extension", &id);
                 }
             }
@@ -298,8 +480,20 @@ async fn import_extension_as(door: Door, t: &Ticket, team: &str, src: &Path, wan
 }
 
 /// Fetched into a stage, then imported as a file; a store link's package must be the store's.
-pub async fn import_extension_url(door: Door, t: &Ticket, team: &str, url: &str) -> Result<ExtensionEntry> {
-    doors::clear(door, team, &Ask { new: true, ..Default::default() })?;
+pub async fn import_extension_url(
+    door: Door,
+    t: &Ticket,
+    team: &str,
+    url: &str,
+) -> Result<ExtensionEntry> {
+    doors::clear(
+        door,
+        team,
+        &Ask {
+            new: true,
+            ..Default::default()
+        },
+    )?;
     perm::team_write::<Create>(team, On::Team)?;
     let want = local::extensions::Want::of_link(url);
     if let Some(id) = &want.link {
@@ -318,7 +512,12 @@ pub async fn delete_extension(door: Door, t: &Ticket, team: &str, id: &str) -> R
 /// A team profile's extensions, unpacked under `into` in its open copy. One the
 /// team's list here does not show is asked for as the profile's start needs it;
 /// one that cannot be had is left out, and the person is told.
-pub async fn unpack_for_profile(team: &str, profile: (&str, &str), ids: &[String], into: &Path) -> Vec<PathBuf> {
+pub async fn unpack_for_profile(
+    team: &str,
+    profile: (&str, &str),
+    ids: &[String],
+    into: &Path,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if ids.is_empty() {
         return out;
@@ -362,7 +561,9 @@ pub async fn unpack_for_profile(team: &str, profile: (&str, &str), ids: &[String
 /// team's own list is hidden from.
 pub async fn bookmarks_for(team: &str, profile_id: &str) -> Vec<Bookmark> {
     let got = match client(team) {
-        Ok(c) => remote::bookmarks_for(&c, profile_id).await.map_err(|e| e.to_string()),
+        Ok(c) => remote::bookmarks_for(&c, profile_id)
+            .await
+            .map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     got.unwrap_or_else(|e| {
@@ -371,7 +572,12 @@ pub async fn bookmarks_for(team: &str, profile_id: &str) -> Vec<Bookmark> {
     })
 }
 
-async fn fetch_one(c: &super::client::TeamClient, id: &str, for_start: Option<&str>, into: &Path) -> Result<PathBuf> {
+async fn fetch_one(
+    c: &super::client::TeamClient,
+    id: &str,
+    for_start: Option<&str>,
+    into: &Path,
+) -> Result<PathBuf> {
     let name = super::open::safe(id);
     let (dir, zip) = (into.join(&name), into.join(format!("{name}.zip")));
     std::fs::create_dir_all(into)?;

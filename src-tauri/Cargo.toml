@@ -1,6 +1,6 @@
 [package]
 name = "shardbrowser-launcher"
-version = "1.2.11"
+version = "1.2.14"
 description = "ShardBrowser Launcher: profiles, proxies, fingerprints and automation for the ShardBrowser engine."
 authors = ["ShardBrowser contributors"]
 edition = "2021"
@@ -65,7 +65,7 @@ dirs = "5"
 iana-time-zone = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "socks", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "socks", "json", "system-proxy"] }
 # A session upload read from its file as it goes, already in the tree with reqwest.
 http-body = "1"
 # The team link: hyper's pool over connections switched to TLS with the team's key.

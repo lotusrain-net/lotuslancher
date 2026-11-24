@@ -72,7 +72,11 @@ impl FolderState {
             return;
         }
         let mut registry = Vec::new();
-        for f in self.registry.drain(..).map(|f| if f == old { new.to_string() } else { f }) {
+        for f in self
+            .registry
+            .drain(..)
+            .map(|f| if f == old { new.to_string() } else { f })
+        {
             if !registry.contains(&f) {
                 registry.push(f);
             }
@@ -112,8 +116,8 @@ fn read(path: &Path) -> Result<Option<FolderState>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
-    let stored: Stored =
-        serde_json::from_slice(&raw).with_context(|| format!("{} is not readable as folders", path.display()))?;
+    let stored: Stored = serde_json::from_slice(&raw)
+        .with_context(|| format!("{} is not readable as folders", path.display()))?;
     if stored.version > VERSION {
         bail!("{} was written by a newer launcher", path.display());
     }
@@ -121,7 +125,10 @@ fn read(path: &Path) -> Result<Option<FolderState>> {
 }
 
 fn write(path: &Path, state: &FolderState) -> Result<()> {
-    let body = serde_json::to_vec_pretty(&Stored { version: VERSION, state: state.clone() })?;
+    let body = serde_json::to_vec_pretty(&Stored {
+        version: VERSION,
+        state: state.clone(),
+    })?;
     let tmp = path.with_extension("json.tmp");
     {
         let mut f = fs::File::create(&tmp).with_context(|| format!("write {}", tmp.display()))?;
@@ -200,12 +207,16 @@ mod tests {
         }
     }
     fn dir() -> Dir {
-        let d = std::env::temp_dir().join(format!("shardx-folders-{}", uuid::Uuid::new_v4().simple()));
+        let d =
+            std::env::temp_dir().join(format!("shardx-folders-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir_all(&d).unwrap();
         Dir(d)
     }
     fn look(color: Option<&str>, icon: &str) -> FolderMeta {
-        FolderMeta { color: color.map(String::from), icon: icon.into() }
+        FolderMeta {
+            color: color.map(String::from),
+            icon: icon.into(),
+        }
     }
 
     #[test]
@@ -237,7 +248,10 @@ mod tests {
             meta: [("Shops".to_string(), look(Some("green"), "cart"))].into(),
         };
         assert!(import_at(&path, first).unwrap());
-        let other = FolderState { registry: vec!["Other".into()], meta: BTreeMap::new() };
+        let other = FolderState {
+            registry: vec!["Other".into()],
+            meta: BTreeMap::new(),
+        };
         assert!(!import_at(&path, other).unwrap());
         let back = read(&path).unwrap().unwrap();
         assert_eq!(back.registry, ["Empty1"]);
@@ -286,7 +300,14 @@ mod tests {
         })
         .unwrap();
         assert!(!path.exists());
-        assert!(import_at(&path, FolderState { registry: vec!["Ads".into()], meta: BTreeMap::new() }).unwrap());
+        assert!(import_at(
+            &path,
+            FolderState {
+                registry: vec!["Ads".into()],
+                meta: BTreeMap::new()
+            }
+        )
+        .unwrap());
     }
 
     #[test]

@@ -72,14 +72,22 @@ pub fn list_all() -> Result<Vec<LibraryEntry>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if store::is_os_litter(&entry.file_name()) || entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
+        if store::is_os_litter(&entry.file_name())
+            || entry.path().extension().and_then(|s| s.to_str()) != Some("json")
+        {
             continue;
         }
         // One unreadable file must not take the whole library with it.
-        let Ok(body) = fs::read_to_string(entry.path()) else { continue };
+        let Ok(body) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
         // The file name is the entry's id: get and delete find it by that
         // name, and a copy made by hand keeps the id written inside it.
-        let stem = entry.path().file_stem().and_then(|s| s.to_str()).map(String::from);
+        let stem = entry
+            .path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(String::from);
         if let Ok(mut e) = serde_json::from_str::<LibraryEntry>(&body) {
             if let Some(stem) = stem {
                 e.id = stem;
@@ -151,15 +159,13 @@ pub fn get(id: &str) -> Result<Option<LibraryEntry>> {
 pub fn import(json_text: &str, id_hint: Option<String>) -> Result<LibraryEntry> {
     let payload: Value =
         serde_json::from_str(json_text).context("not a valid JSON FingerprintConfig")?;
-    let raw_id = id_hint
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            payload
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(slugify)
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-        });
+    let raw_id = id_hint.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
+        payload
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(slugify)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    });
     let id = ensure_unique_id(&raw_id)?;
     let entry = wrap_payload(&id, &payload);
     let path = path_for(&id)?;
@@ -177,7 +183,11 @@ fn slugify(s: &str) -> String {
         }
     }
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() { uuid::Uuid::new_v4().to_string() } else { trimmed }
+    if trimmed.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        trimmed
+    }
 }
 
 fn ensure_unique_id(base: &str) -> Result<String> {

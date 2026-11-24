@@ -66,12 +66,27 @@ struct Stored {
 
 /// The parts of a stored profile a template carries: never its name, notes,
 /// cookies or anything of its fingerprint.
-const TOP: &[&str] = &["timezone", "icu_locale", "ui_language", "webrtc", "geolocation", "blocked_ports", "media_devices", "noise"];
+const TOP: &[&str] = &[
+    "timezone",
+    "icu_locale",
+    "ui_language",
+    "webrtc",
+    "geolocation",
+    "blocked_ports",
+    "media_devices",
+    "noise",
+];
 const NESTED: &[(&str, &[&str])] = &[
-    ("navigator", &["language", "accept_language", "languages", "do_not_track"]),
+    (
+        "navigator",
+        &["language", "accept_language", "languages", "do_not_track"],
+    ),
     ("screen", &["refresh_rate"]),
     ("window", &["keep_focus", "maximized"]),
-    ("_meta", &["proxy_id", "color", "extensions", "android_media"]),
+    (
+        "_meta",
+        &["proxy_id", "color", "extensions", "android_media"],
+    ),
 ];
 
 /// A template's part of a stored profile (`_meta` inside); the noise seeds stay each profile's own.
@@ -83,9 +98,13 @@ pub fn settings_of(config: &Map<String, Value>) -> Map<String, Value> {
         }
     }
     for (block, keys) in NESTED {
-        let Some(src) = config.get(*block).and_then(Value::as_object) else { continue };
-        let picked: Map<String, Value> =
-            keys.iter().filter_map(|k| src.get(*k).map(|v| (k.to_string(), v.clone()))).collect();
+        let Some(src) = config.get(*block).and_then(Value::as_object) else {
+            continue;
+        };
+        let picked: Map<String, Value> = keys
+            .iter()
+            .filter_map(|k| src.get(*k).map(|v| (k.to_string(), v.clone())))
+            .collect();
         if !picked.is_empty() {
             out.insert(block.to_string(), Value::Object(picked));
         }
@@ -130,21 +149,39 @@ pub fn os_of(platform: &str) -> String {
 
 /// Where a profile's fingerprint came from: its library fingerprint, and its OS.
 pub fn source_of(config: &Map<String, Value>) -> Source {
-    let text = |block: &str, key: &str| config.get(block).and_then(|b| b.get(key)).and_then(Value::as_str).unwrap_or("");
+    let text = |block: &str, key: &str| {
+        config
+            .get(block)
+            .and_then(|b| b.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    };
     let library = Some(text("_meta", "gpu_preset_id").trim().to_string()).filter(|s| !s.is_empty());
     let ua = text("navigator", "user_agent").to_ascii_lowercase();
     // A phone's navigator.platform says "Linux armv8l"; its user agent says Android.
-    let os = if ua.contains("android") { "Android".to_string() } else { os_of(text("navigator", "platform")) };
+    let os = if ua.contains("android") {
+        "Android".to_string()
+    } else {
+        os_of(text("navigator", "platform"))
+    };
     Source { library, os }
 }
 
 /// Trimmed, inner runs of whitespace as one space, at most `NAME_MAX` characters.
 pub fn clean_name(name: &str) -> String {
-    name.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(NAME_MAX).collect()
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(NAME_MAX)
+        .collect()
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// A template as it is kept: a name, its settings cut to what a template
@@ -155,8 +192,17 @@ pub fn cleaned(t: ProfileTemplate) -> Result<ProfileTemplate> {
         bail!("a template needs a name");
     }
     let mut seen = HashSet::new();
-    let tags = t.tags.into_iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty() && seen.insert(x.clone())).collect();
-    let library = t.source.library.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+    let tags = t
+        .tags
+        .into_iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty() && seen.insert(x.clone()))
+        .collect();
+    let library = t
+        .source
+        .library
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty());
     let os = match os_of(&t.source.os) {
         os if os.is_empty() => t.source.os.trim().to_string(),
         os => os,
@@ -185,7 +231,9 @@ impl TemplateState {
     /// Another template than `id` with this name, as names are told apart here.
     pub(in crate::space) fn named(&self, name: &str, id: &str) -> Option<&ProfileTemplate> {
         let name = clean_name(name);
-        self.templates.iter().find(|t| t.id != id && same(&t.name, &name))
+        self.templates
+            .iter()
+            .find(|t| t.id != id && same(&t.name, &name))
     }
 
     /// Adds the template or changes the one with its id; a default takes the mark from the rest.
@@ -221,8 +269,8 @@ fn read(path: &Path) -> Result<Option<TemplateState>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
-    let stored: Stored =
-        serde_json::from_slice(&raw).with_context(|| format!("{} is not readable as profile templates", path.display()))?;
+    let stored: Stored = serde_json::from_slice(&raw)
+        .with_context(|| format!("{} is not readable as profile templates", path.display()))?;
     if stored.version > VERSION {
         bail!("{} was written by a newer launcher", path.display());
     }
@@ -230,7 +278,10 @@ fn read(path: &Path) -> Result<Option<TemplateState>> {
 }
 
 fn write(path: &Path, state: &TemplateState) -> Result<()> {
-    let body = serde_json::to_vec_pretty(&Stored { version: VERSION, state: state.clone() })?;
+    let body = serde_json::to_vec_pretty(&Stored {
+        version: VERSION,
+        state: state.clone(),
+    })?;
     let tmp = path.with_extension("json.tmp");
     {
         let mut f = fs::File::create(&tmp).with_context(|| format!("write {}", tmp.display()))?;
@@ -257,7 +308,9 @@ fn change<T>(f: impl FnOnce(&mut TemplateState) -> Result<T>) -> Result<T> {
 }
 
 pub(in crate::space) fn list() -> Result<Vec<ProfileTemplate>> {
-    Ok(read(&store::templates_path()?)?.unwrap_or_default().templates)
+    Ok(read(&store::templates_path()?)?
+        .unwrap_or_default()
+        .templates)
 }
 
 pub(in crate::space) fn save(t: ProfileTemplate) -> Result<ProfileTemplate> {
@@ -284,7 +337,10 @@ mod tests {
         }
     }
     fn dir() -> Dir {
-        let d = std::env::temp_dir().join(format!("shardx-templates-{}", uuid::Uuid::new_v4().simple()));
+        let d = std::env::temp_dir().join(format!(
+            "shardx-templates-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
         fs::create_dir_all(&d).unwrap();
         Dir(d)
     }
@@ -292,7 +348,11 @@ mod tests {
         v.as_object().cloned().unwrap()
     }
     fn tpl(id: &str, name: &str) -> ProfileTemplate {
-        ProfileTemplate { id: id.into(), name: name.into(), ..Default::default() }
+        ProfileTemplate {
+            id: id.into(),
+            name: name.into(),
+            ..Default::default()
+        }
     }
 
     /// A profile as the form writes it: identity, fingerprint and settings together.
@@ -329,7 +389,13 @@ mod tests {
                 "_meta": { "proxy_id": "x1", "color": "#ff0000", "extensions": ["e1"] },
             })
         );
-        assert_eq!(source_of(&profile()), Source { library: Some("win-rtx".into()), os: "Windows".into() });
+        assert_eq!(
+            source_of(&profile()),
+            Source {
+                library: Some("win-rtx".into()),
+                os: "Windows".into()
+            }
+        );
         // Cut again, it stays as it is.
         assert_eq!(settings_of(&s), s);
     }
@@ -344,12 +410,21 @@ mod tests {
             "webgl": { "renderer": "GTX" },
         }));
         apply(&mut fresh, &settings_of(&profile()));
-        assert_eq!(fresh["_meta"], json!({ "id": "", "gpu_preset_id": "win-gtx", "proxy_id": "x1", "color": "#ff0000", "extensions": ["e1"] }));
+        assert_eq!(
+            fresh["_meta"],
+            json!({ "id": "", "gpu_preset_id": "win-gtx", "proxy_id": "x1", "color": "#ff0000", "extensions": ["e1"] })
+        );
         assert_eq!(fresh["navigator"]["hardware_concurrency"], 8);
         assert_eq!(fresh["navigator"]["language"], "de-DE");
-        assert_eq!(fresh["screen"], json!({ "width": 2560, "height": 1440, "refresh_rate": 144 }));
+        assert_eq!(
+            fresh["screen"],
+            json!({ "width": 2560, "height": 1440, "refresh_rate": 144 })
+        );
         assert_eq!(fresh["webgl"]["renderer"], "GTX");
-        assert_eq!(fresh["noise"]["canvas"], json!({ "enabled": true, "seed": 0 }));
+        assert_eq!(
+            fresh["noise"]["canvas"],
+            json!({ "enabled": true, "seed": 0 })
+        );
         assert!(fresh.get("name").is_none() && fresh.get("notes").is_none());
         // Settings handed in whole are cut first: a name or a fingerprint never lands.
         let mut again = obj(json!({ "_meta": { "id": "" } }));
@@ -360,8 +435,16 @@ mod tests {
 
     #[test]
     fn a_phone_and_an_imported_platform_read_as_the_os_control_names_them() {
-        let phone = obj(json!({ "navigator": { "platform": "Linux armv8l", "user_agent": "Mozilla/5.0 (Linux; Android 14)" } }));
-        assert_eq!(source_of(&phone), Source { library: None, os: "Android".into() });
+        let phone = obj(
+            json!({ "navigator": { "platform": "Linux armv8l", "user_agent": "Mozilla/5.0 (Linux; Android 14)" } }),
+        );
+        assert_eq!(
+            source_of(&phone),
+            Source {
+                library: None,
+                os: "Android".into()
+            }
+        );
         assert_eq!(os_of("MacIntel"), "macOS");
         assert_eq!(os_of("Linux x86_64"), "Linux");
         assert_eq!(os_of("Linux armv81"), "Android");
@@ -374,15 +457,28 @@ mod tests {
         let path = d.0.join("templates.json");
         assert_eq!(read(&path).unwrap(), None);
         let made = change_at(&path, |s| {
-            let a = s.upsert(ProfileTemplate { is_default: true, settings: profile(), ..tpl("", "  Ads   base ") })?;
-            s.upsert(ProfileTemplate { is_default: true, ..tpl("pt-b", "Shops") })?;
+            let a = s.upsert(ProfileTemplate {
+                is_default: true,
+                settings: profile(),
+                ..tpl("", "  Ads   base ")
+            })?;
+            s.upsert(ProfileTemplate {
+                is_default: true,
+                ..tpl("pt-b", "Shops")
+            })?;
             Ok(a)
         })
         .unwrap();
         assert!(made.id.starts_with("pt-") && made.name == "Ads base");
         assert!(made.settings.get("name").is_none(), "the settings were cut");
         let back = read(&path).unwrap().unwrap();
-        assert_eq!(back.templates.iter().map(|t| (t.name.as_str(), t.is_default)).collect::<Vec<_>>(), [("Ads base", false), ("Shops", true)]);
+        assert_eq!(
+            back.templates
+                .iter()
+                .map(|t| (t.name.as_str(), t.is_default))
+                .collect::<Vec<_>>(),
+            [("Ads base", false), ("Shops", true)]
+        );
         let raw: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(raw["version"], 1);
 
@@ -396,7 +492,16 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(read(&path).unwrap().unwrap().templates.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["ADS base"]);
+        assert_eq!(
+            read(&path)
+                .unwrap()
+                .unwrap()
+                .templates
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["ADS base"]
+        );
     }
 
     #[test]

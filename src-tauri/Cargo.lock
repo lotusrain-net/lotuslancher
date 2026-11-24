@@ -2815,9 +2815,11 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry",
 ]
 
 [[package]]
@@ -5559,7 +5561,7 @@ dependencies = [
 
 [[package]]
 name = "shardbrowser-launcher"
-version = "1.2.11"
+version = "1.2.14"
 dependencies = [
  "ab_glyph",
  "aes",

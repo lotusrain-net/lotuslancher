@@ -66,6 +66,7 @@ pub async fn call(
     let url = format!("{BASE}{path}");
     let cli = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        .no_proxy()
         .build()?;
     let mut req = match method {
         "GET" => cli.get(&url),
@@ -101,7 +102,13 @@ pub async fn call(
             .get("message")
             .and_then(|m| m.as_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| if text.is_empty() { status.as_str() } else { &text });
+            .unwrap_or_else(|| {
+                if text.is_empty() {
+                    status.as_str()
+                } else {
+                    &text
+                }
+            });
         return Err(anyhow!("{msg}"));
     }
     Ok(value)
@@ -123,6 +130,7 @@ pub async fn call(
 pub async fn trial_offer() -> Result<Value> {
     let cli = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .no_proxy()
         .build()?;
     // An empty body still has to be a JSON object with a real Content-Length;
     // see the note in call() for what a zero-length POST does to actix.
@@ -142,7 +150,11 @@ pub async fn trial_offer() -> Result<Value> {
 /// Fetch the active proxies for a Datacenter/ISP order and persist them into
 /// the proxy list of the space `t` was asked in, as `kind` ("socks5" | "http").
 /// Returns the number of new proxies actually added (identical ones are skipped).
-pub async fn import_order_proxies(t: &crate::space::Ticket, order_id: i64, kind: String) -> Result<usize> {
+pub async fn import_order_proxies(
+    t: &crate::space::Ticket,
+    order_id: i64,
+    kind: String,
+) -> Result<usize> {
     let q = vec![("order_id".to_string(), order_id.to_string())];
     let resp = call("GET", "/user/api/proxies/active", &q, None).await?;
 
@@ -309,8 +321,14 @@ pub async fn residential_proxy(req: ResiRequest<'_>) -> Result<ProxyEntry> {
 
     // OS and ISP are premium-only: a cheaper plan would come back without them
     // and say nothing, so name the mistake here.
-    let os = req.os.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty() && s != "unset");
-    let isp = req.isp.map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s != "unset");
+    let os = req
+        .os
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "unset");
+    let isp = req
+        .isp
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "unset");
     if isp.is_some() && plan != "premium" {
         return Err(anyhow!(
             "an ISP filter can only be pinned on the Premium residential plan"
@@ -324,7 +342,9 @@ pub async fn residential_proxy(req: ResiRequest<'_>) -> Result<ProxyEntry> {
         }
         const KNOWN: [&str; 5] = ["macos", "windows", "android", "linux", "ios"];
         if !KNOWN.contains(&os) {
-            return Err(anyhow!("unknown OS \"{os}\" — one of macos, windows, android, linux, ios"));
+            return Err(anyhow!(
+                "unknown OS \"{os}\" — one of macos, windows, android, linux, ios"
+            ));
         }
     }
 
@@ -352,7 +372,10 @@ pub async fn residential_proxy(req: ResiRequest<'_>) -> Result<ProxyEntry> {
     // Unmetered is a flat plan and reports no meter, so there is nothing to
     // check; the other two stop here rather than burn a pass on dead sessions.
     if proxy_type != "unlimited" {
-        let left = profile.get("data_remain").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let left = profile
+            .get("data_remain")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         if left <= 0.0 {
             return Err(anyhow!(
                 "no residential traffic left on the {proxy_type} plan — top it up and run again"
@@ -481,7 +504,11 @@ pub(crate) fn parse_ts(v: &Value) -> Option<i64> {
             let h: i64 = digits.get(0..2)?.parse().ok()?;
             let m: i64 = digits.get(2..4).and_then(|x| x.parse().ok()).unwrap_or(0);
             let off = h * 3600 + m * 60;
-            if sign == b'+' { off } else { -off }
+            if sign == b'+' {
+                off
+            } else {
+                -off
+            }
         }
         _ => return None,
     };
@@ -503,9 +530,15 @@ async fn usage_rows(tier: &str, start: i64, end: i64) -> Result<Vec<Row>> {
             ("offset".to_string(), (page * LIMIT).to_string()),
         ];
         let v = call("GET", "/user/api/proxies/analytics/overall", &q, None).await?;
-        let results = v.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+        let results = v
+            .get("results")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
         for r in &results {
-            let Some(ts) = r.get("timestamp").and_then(parse_ts) else { continue };
+            let Some(ts) = r.get("timestamp").and_then(parse_ts) else {
+                continue;
+            };
             let data = r.get("data").and_then(|x| x.as_u64()).unwrap_or(0);
             let reqs = r.get("requests").and_then(|x| x.as_u64()).unwrap_or(0);
             out.push((ts, data, reqs));
@@ -524,7 +557,12 @@ async fn usage_rows(tier: &str, start: i64, end: i64) -> Result<Vec<Row>> {
 /// window is read again a day at a time, which comes back hourly.
 async fn usage_rows_fine(tier: &str, start: i64, end: i64, step: i64) -> Result<Vec<Row>> {
     let rows = usage_rows(tier, start, end).await?;
-    let coarsest = rows.windows(2).map(|w| w[1].0 - w[0].0).filter(|d| *d > 0).min().unwrap_or(0);
+    let coarsest = rows
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .filter(|d| *d > 0)
+        .min()
+        .unwrap_or(0);
     if coarsest <= step || step >= 86400 {
         return Ok(rows);
     }
@@ -548,7 +586,13 @@ fn no_such_tier(e: &anyhow::Error) -> bool {
 /// One residential tier over the range and the same span before it: bytes
 /// and requests per bucket, plus the two totals before. None when the
 /// account has no order of that tier.
-async fn usage_tier(tier: &str, from: i64, now: i64, step: i64, n: usize) -> Result<Option<(Vec<u64>, u64, Vec<u64>, u64)>> {
+async fn usage_tier(
+    tier: &str,
+    from: i64,
+    now: i64,
+    step: i64,
+    n: usize,
+) -> Result<Option<(Vec<u64>, u64, Vec<u64>, u64)>> {
     let span = step * n as i64;
     let rows = match usage_rows_fine(tier, from, now, step).await {
         Ok(r) => r,
@@ -567,7 +611,9 @@ async fn usage_tier(tier: &str, from: i64, now: i64, step: i64, n: usize) -> Res
             reqs[i] += r;
         }
     }
-    let before = usage_rows(tier, from - span, from).await.unwrap_or_default();
+    let before = usage_rows(tier, from - span, from)
+        .await
+        .unwrap_or_default();
     let prev_data = before.iter().map(|r| r.1).sum();
     let prev_reqs = before.iter().map(|r| r.2).sum();
     Ok(Some((data, prev_data, reqs, prev_reqs)))
@@ -585,9 +631,15 @@ pub async fn usage(range: &str) -> Result<Value> {
     // The last bucket is the one now falls in, so it fills up as it goes.
     let end = (now / step + 1) * step;
     let from = end - step * n as i64;
-    const TIERS: [(&str, &str); 3] = [("standart", "standart"), ("premium", "premium"), ("unlimited", "unmetered")];
+    const TIERS: [(&str, &str); 3] = [
+        ("standart", "standart"),
+        ("premium", "premium"),
+        ("unlimited", "unmetered"),
+    ];
     let answers = futures_util::future::join_all(
-        TIERS.iter().map(|(api, _)| usage_tier(api, from, now, step, n)),
+        TIERS
+            .iter()
+            .map(|(api, _)| usage_tier(api, from, now, step, n)),
     )
     .await;
 
@@ -596,9 +648,14 @@ pub async fn usage(range: &str) -> Result<Value> {
     let mut reqs_before = 0u64;
     let mut any = false;
     for ((_, key), answer) in TIERS.iter().zip(answers) {
-        let Some((data, data_before, r, r_before)) = answer? else { continue };
+        let Some((data, data_before, r, r_before)) = answer? else {
+            continue;
+        };
         any = true;
-        traffic.insert((*key).into(), serde_json::json!({ "points": data, "previous": data_before }));
+        traffic.insert(
+            (*key).into(),
+            serde_json::json!({ "points": data, "previous": data_before }),
+        );
         for (sum, x) in reqs.iter_mut().zip(r) {
             *sum += x;
         }
@@ -626,8 +683,14 @@ mod usage_tests {
         assert_eq!(at("2026-10-21T10:00:00.123456Z"), Some(1_792_576_800));
         assert_eq!(at("2026-10-21T13:00:00+03:00"), Some(1_792_576_800));
         assert_eq!(at("2026-10-21 10:00:00"), Some(1_792_576_800));
-        assert_eq!(parse_ts(&serde_json::json!(1_792_576_800)), Some(1_792_576_800));
-        assert_eq!(parse_ts(&serde_json::json!(1_792_576_800_000i64)), Some(1_792_576_800));
+        assert_eq!(
+            parse_ts(&serde_json::json!(1_792_576_800)),
+            Some(1_792_576_800)
+        );
+        assert_eq!(
+            parse_ts(&serde_json::json!(1_792_576_800_000i64)),
+            Some(1_792_576_800)
+        );
         assert_eq!(at("yesterday"), None);
     }
 
@@ -641,7 +704,9 @@ mod usage_tests {
 
     #[test]
     fn a_missing_tier_is_told_apart_from_a_failure() {
-        assert!(no_such_tier(&anyhow!("User don't have active order with this proxy type")));
+        assert!(no_such_tier(&anyhow!(
+            "User don't have active order with this proxy type"
+        )));
         assert!(!no_such_tier(&anyhow!("Upstream error: 502")));
     }
 }

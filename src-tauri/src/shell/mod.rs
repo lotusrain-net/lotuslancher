@@ -369,7 +369,16 @@ static ENGINE_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// Download the browser engine (first run, or the init page's retry). Its
 /// progress reaches the local views as `runtime:progress`.
 pub fn install_engine() {
-    if engine_ready() || INSTALLING.swap(true, SeqCst) {
+    install_engine_inner(false);
+}
+
+/// Let the init page retry fingerprint downloads after the engine was already installed.
+pub fn retry_engine_install() {
+    install_engine_inner(true);
+}
+
+fn install_engine_inner(allow_installed_engine: bool) {
+    if (!allow_installed_engine && engine_ready()) || INSTALLING.swap(true, SeqCst) {
         return;
     }
     *ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = None;

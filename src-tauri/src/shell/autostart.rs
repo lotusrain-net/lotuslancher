@@ -9,8 +9,8 @@ mod imp {
     use anyhow::{bail, Result};
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
-        KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegQueryValueExW, RegSetValueExW, HKEY,
+        HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
     };
 
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -62,7 +62,16 @@ mod imp {
     pub fn enabled() -> bool {
         let Ok(key) = open() else { return false };
         let n = wide(NAME);
-        let rc = unsafe { RegQueryValueExW(key.0, n.as_ptr(), std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        let rc = unsafe {
+            RegQueryValueExW(
+                key.0,
+                n.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
         rc == ERROR_SUCCESS
     }
 
@@ -76,7 +85,8 @@ mod imp {
         let value = wide(&format!("\"{}\" --autostart", exe.display()));
         let n = wide(NAME);
         let bytes = (value.len() * 2) as u32;
-        let rc = unsafe { RegSetValueExW(key.0, n.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), bytes) };
+        let rc =
+            unsafe { RegSetValueExW(key.0, n.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), bytes) };
         if rc != ERROR_SUCCESS {
             bail!("autostart_unavailable");
         }

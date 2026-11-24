@@ -65,7 +65,8 @@ fn check_password(password: &str) -> Result<()> {
 
 /// Refused while the browser runs: its files are open, and sealing them would catch them half-written.
 fn check_closed(id: &str) -> Result<()> {
-    if crate::process::Tracker::shared().is_running(id) || crate::reset::lock_is_live(&udd_of(id)?) {
+    if crate::process::Tracker::shared().is_running(id) || crate::reset::lock_is_live(&udd_of(id)?)
+    {
         bail!(CLOSE_FIRST);
     }
     Ok(())
@@ -105,8 +106,13 @@ fn stub_of(full: &StoredProfile, key: &DataKey, lock: &seal::Lock) -> Result<Sto
 
 /// `stub` opened with `key`: the profile as it was before it was locked, its lock still on it.
 fn full_of(stub: &StoredProfile, key: &DataKey) -> Result<StoredProfile> {
-    let blob = stub.config.get(SEALED).and_then(|v| v.as_str()).context("profile has no sealed part")?;
-    let secret: Secret = serde_json::from_slice(&seal::open_blob(&stub.meta.id, key, "profile", blob)?)?;
+    let blob = stub
+        .config
+        .get(SEALED)
+        .and_then(|v| v.as_str())
+        .context("profile has no sealed part")?;
+    let secret: Secret =
+        serde_json::from_slice(&seal::open_blob(&stub.meta.id, key, "profile", blob)?)?;
     let mut config = secret.config;
     if let Some(n) = stub.config.get("name") {
         config.insert("name".into(), n.clone());
@@ -179,7 +185,11 @@ pub(in crate::space) fn change_password(id: &str, old: &str, new: &str) -> Resul
 pub(in crate::space) fn save_full(full: &StoredProfile, key: &DataKey) -> Result<()> {
     let _guard = profile::file_lock();
     let existing = profile::load_raw(&full.meta.id)?;
-    let lock = existing.meta.lock.clone().context("profile is not protected")?;
+    let lock = existing
+        .meta
+        .lock
+        .clone()
+        .context("profile is not protected")?;
     let mut next = full.clone();
     next.meta.pinned = existing.meta.pinned;
     next.meta.folder = existing.meta.folder.clone();
@@ -226,11 +236,19 @@ pub(in crate::space) fn seal_data(id: &str, key: &DataKey) -> Result<()> {
 
 /// Profiles left open by a crash: their plaintext is still on disk until the next unlock.
 pub(in crate::space) fn left_open() -> Vec<String> {
-    let Ok(dir) = store::profiles_dir() else { return Vec::new() };
-    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let Ok(dir) = store::profiles_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     entries
         .flatten()
-        .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
         .filter(|id| {
             profile::load_raw(id).is_ok_and(|p| is_protected(&p))
                 && udd_of(id).is_ok_and(|u| u.exists())
@@ -262,8 +280,12 @@ mod tests {
         p.meta.folder = "Work".into();
         p.meta.extensions = vec!["ext-marker-1".into()];
         p.config.insert("name".into(), "Visible".into());
-        p.config.insert("notes".into(), "secret notes marker".into());
-        p.config.insert("navigator".into(), serde_json::json!({ "platform": "Win32-marker" }));
+        p.config
+            .insert("notes".into(), "secret notes marker".into());
+        p.config.insert(
+            "navigator".into(),
+            serde_json::json!({ "platform": "Win32-marker" }),
+        );
         p
     }
 
@@ -278,7 +300,12 @@ mod tests {
 
         protect("a1", "long enough").unwrap();
         let body = fs::read_to_string(store::profiles_dir().unwrap().join("a1.json")).unwrap();
-        for leak in ["proxy-marker-1", "secret notes marker", "Win32-marker", "ext-marker-1"] {
+        for leak in [
+            "proxy-marker-1",
+            "secret notes marker",
+            "Win32-marker",
+            "ext-marker-1",
+        ] {
             assert!(!body.contains(leak), "{leak} readable in {body}");
         }
         assert!(body.contains("Visible") && body.contains("Work"));
@@ -289,10 +316,16 @@ mod tests {
         let (full, key) = unlock("a1", "long enough").unwrap();
         assert_eq!(full.meta.proxy_id.as_deref(), Some("proxy-marker-1"));
         assert_eq!(full.config.get("notes").unwrap(), "secret notes marker");
-        assert_eq!(fs::read(open_data("a1", &key).unwrap().join("Default/Cookies")).unwrap(), b"cookie jar");
+        assert_eq!(
+            fs::read(open_data("a1", &key).unwrap().join("Default/Cookies")).unwrap(),
+            b"cookie jar"
+        );
         seal_data("a1", &key).unwrap();
         assert!(!udd.exists());
-        assert_eq!(unlock("a1", "wrong one!").err().unwrap().to_string(), seal::WRONG_PASSWORD);
+        assert_eq!(
+            unlock("a1", "wrong one!").err().unwrap().to_string(),
+            seal::WRONG_PASSWORD
+        );
     }
 
     #[test]

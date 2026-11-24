@@ -75,8 +75,17 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 fn mint_at(secret: &str, iat: u64, exp: u64) -> String {
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    let claims = Claims { sub: "shardx-api".into(), iat, exp };
-    encode(&Header::new(Algorithm::HS256), &claims, &EncodingKey::from_secret(secret.as_bytes())).unwrap()
+    let claims = Claims {
+        sub: "shardx-api".into(),
+        iat,
+        exp,
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .unwrap()
 }
 
 /// A token the agent would send: issued now, valid for `ttl_secs`.
@@ -136,7 +145,10 @@ fn refusal(c: &CmdError) -> ApiError {
         CmdError::Leased(device) => body["device_name"] = json!(device),
         _ => {}
     }
-    ApiError(StatusCode::from_u16(c.status()).unwrap_or(StatusCode::BAD_GATEWAY), body)
+    ApiError(
+        StatusCode::from_u16(c.status()).unwrap_or(StatusCode::BAD_GATEWAY),
+        body,
+    )
 }
 
 /// The refusal inside an error, or `fallback` with its words.
@@ -163,7 +175,9 @@ async fn in_space(mut req: Request, next: Next) -> Response {
         None => None,
         Some(v) => match v.to_str().ok().and_then(|s| s.trim().parse::<u64>().ok()) {
             Some(n) => Some(n),
-            None => return err(StatusCode::BAD_REQUEST, "X-Space-Epoch is a number").into_response(),
+            None => {
+                return err(StatusCode::BAD_REQUEST, "X-Space-Epoch is a number").into_response()
+            }
         },
     };
     let t = match space::ticket(asked) {
@@ -173,7 +187,8 @@ async fn in_space(mut req: Request, next: Next) -> Response {
     let epoch = t.epoch();
     req.extensions_mut().insert(t);
     let mut res = next.run(req).await;
-    res.headers_mut().insert(EPOCH_HEADER, HeaderValue::from(epoch));
+    res.headers_mut()
+        .insert(EPOCH_HEADER, HeaderValue::from(epoch));
     res
 }
 
@@ -229,7 +244,8 @@ fn host_is_ours(req: &Request) -> bool {
 
 fn forbidden(code: &str) -> Response {
     let mut res = err(StatusCode::FORBIDDEN, code).into_response();
-    res.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
+    res.headers_mut()
+        .insert("cache-control", HeaderValue::from_static("no-store"));
     res
 }
 
@@ -247,12 +263,19 @@ async fn guard(req: Request, next: Next) -> Response {
     // Nothing below sets these; dropped anyway so no handler can ever open the
     // API to a page by adding one.
     let h = res.headers_mut();
-    let cors: Vec<_> = h.keys().filter(|k| k.as_str().starts_with("access-control-")).cloned().collect();
+    let cors: Vec<_> = h
+        .keys()
+        .filter(|k| k.as_str().starts_with("access-control-"))
+        .cloned()
+        .collect();
     for k in cors {
         h.remove(k);
     }
     h.insert("cache-control", HeaderValue::from_static("no-store"));
-    h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    h.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
     res
 }
 
@@ -268,12 +291,17 @@ async fn health() -> Json<Value> {
 
 async fn list_profiles() -> ApiResult {
     crate::space::ready().await;
-    let metas = crate::space::profile::list_all().map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let metas =
+        crate::space::profile::list_all().map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     let running = crate::process::Tracker::shared().running();
-    let by_id: std::collections::HashMap<String, crate::process::RunningProfile> =
-        running.into_iter().map(|r| (r.profile_id.clone(), r)).collect();
+    let by_id: std::collections::HashMap<String, crate::process::RunningProfile> = running
+        .into_iter()
+        .map(|r| (r.profile_id.clone(), r))
+        .collect();
     // Tag ids, as `GET /tags` names them.
-    let tagged = space::tags::list().map(|s| s.by_profile).unwrap_or_default();
+    let tagged = space::tags::list()
+        .map(|s| s.by_profile)
+        .unwrap_or_default();
     let out: Vec<Value> = metas
         .into_iter()
         .map(|m| {
@@ -302,16 +330,20 @@ async fn list_profiles() -> ApiResult {
 
 async fn get_profile(Path(id): Path<String>) -> ApiResult {
     crate::space::ready().await;
-    let stored = crate::space::profile::fetch(&id).await.map_err(fail(StatusCode::NOT_FOUND))?;
-    let mut val = serde_json::to_value(stored)
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let stored = crate::space::profile::fetch(&id)
+        .await
+        .map_err(fail(StatusCode::NOT_FOUND))?;
+    let mut val = serde_json::to_value(stored).map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     if let Some(obj) = val.as_object_mut() {
         obj.insert("tags".into(), json!(profile_tags(&id)));
     }
     if let Some(cdp) = crate::process::Tracker::shared().cdp(&id) {
         if let Some(obj) = val.as_object_mut() {
             obj.insert("running".into(), json!(true));
-            obj.insert("cdp".into(), serde_json::to_value(cdp).unwrap_or(Value::Null));
+            obj.insert(
+                "cdp".into(),
+                serde_json::to_value(cdp).unwrap_or(Value::Null),
+            );
         }
     }
     Ok(Json(val))
@@ -337,7 +369,12 @@ struct CreateReq {
 }
 
 /// Persist verbatim (enrich=false); proxy_id binds, proxy string upserts+tests.
-async fn persist_created(door: Door, t: &Ticket, folder_override: Option<String>, body: CreateReq) -> ApiResult {
+async fn persist_created(
+    door: Door,
+    t: &Ticket,
+    folder_override: Option<String>,
+    body: CreateReq,
+) -> ApiResult {
     let mut cfg = body
         .fingerprint
         .as_object()
@@ -371,8 +408,12 @@ async fn persist_created(door: Door, t: &Ticket, folder_override: Option<String>
     if let Some(pid) = body.proxy_id.as_ref() {
         meta["proxy_id"] = json!(pid);
     } else if let Some(pstr) = body.proxy.as_ref() {
-        let entry = crate::space::proxy::parse_single(pstr)
-            .ok_or_else(|| err(StatusCode::BAD_REQUEST, format!("unparseable proxy: {pstr}")))?;
+        let entry = crate::space::proxy::parse_single(pstr).ok_or_else(|| {
+            err(
+                StatusCode::BAD_REQUEST,
+                format!("unparseable proxy: {pstr}"),
+            )
+        })?;
         let stored = crate::space::proxy::upsert_dedup(Door("proxy_save"), t, entry)
             .await
             .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
@@ -390,8 +431,13 @@ async fn persist_created(door: Door, t: &Ticket, folder_override: Option<String>
 
     let stored: space::profile::StoredProfile =
         serde_json::from_value(Value::Object(cfg)).map_err(fail(StatusCode::BAD_REQUEST))?;
-    let opts = space::profile::SaveOpts { inline_proxy, ..Default::default() };
-    let pm = space::profile::save(door, t, stored, opts).await.map_err(fail(StatusCode::BAD_REQUEST))?;
+    let opts = space::profile::SaveOpts {
+        inline_proxy,
+        ..Default::default()
+    };
+    let pm = space::profile::save(door, t, stored, opts)
+        .await
+        .map_err(fail(StatusCode::BAD_REQUEST))?;
     crate::notify_store_changed("profiles");
     Ok(Json(serde_json::to_value(pm).unwrap_or(Value::Null)))
 }
@@ -399,7 +445,6 @@ async fn persist_created(door: Door, t: &Ticket, folder_override: Option<String>
 async fn create_profile(Extension(t): Extension<Ticket>, Json(body): Json<CreateReq>) -> ApiResult {
     persist_created(Door("POST /profiles"), &t, None, body).await
 }
-
 
 #[derive(Deserialize)]
 struct TempReq {
@@ -433,16 +478,20 @@ async fn create_temporary(Extension(t): Extension<Ticket>, Json(body): Json<Temp
     }
     crate::ensure_default_noise(&mut cfg);
     if let Some(n) = body.noise.as_ref() {
-        apply_noise_overrides(&mut cfg, n)
-            .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+        apply_noise_overrides(&mut cfg, n).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
     }
     if let Some(hz) = body.refresh_rate {
         apply_refresh_rate(&mut cfg, hz).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
     }
-    let mut meta = json!({ "id": "", "folder": body.folder.unwrap_or_default(), "temporary": true });
+    let mut meta =
+        json!({ "id": "", "folder": body.folder.unwrap_or_default(), "temporary": true });
     if let Some(pstr) = body.proxy.as_ref() {
-        let entry = crate::space::proxy::parse_single(pstr)
-            .ok_or_else(|| err(StatusCode::BAD_REQUEST, format!("unparseable proxy: {pstr}")))?;
+        let entry = crate::space::proxy::parse_single(pstr).ok_or_else(|| {
+            err(
+                StatusCode::BAD_REQUEST,
+                format!("unparseable proxy: {pstr}"),
+            )
+        })?;
         meta["inline_proxy"] = serde_json::to_value(entry).unwrap_or(Value::Null);
     }
     cfg.insert("_meta".into(), meta);
@@ -484,7 +533,14 @@ fn apply_noise_overrides(
     cfg: &mut serde_json::Map<String, Value>,
     req: &Value,
 ) -> Result<(), String> {
-    const VECTORS: &[&str] = &["canvas", "webgl", "audio", "client_rects", "sensors", "fonts"];
+    const VECTORS: &[&str] = &[
+        "canvas",
+        "webgl",
+        "audio",
+        "client_rects",
+        "sensors",
+        "fonts",
+    ];
     let req = req.as_object().ok_or("`noise` must be an object")?;
     let noise = cfg
         .get_mut("noise")
@@ -499,16 +555,24 @@ fn apply_noise_overrides(
         let slot = noise
             .entry(key.to_string())
             .or_insert_with(|| json!({ "enabled": false, "seed": 0 }));
-        let Some(slot) = slot.as_object_mut() else { continue };
+        let Some(slot) = slot.as_object_mut() else {
+            continue;
+        };
         match val {
             Value::Bool(on) => {
                 slot.insert("enabled".into(), json!(on));
                 // The defaults the UI writes for the two vectors that carry a
                 // strength; turning one on with a zero strength is a no-op.
-                if *on && key == "webgl" && slot.get("intensity").and_then(|v| v.as_f64()) == Some(0.0) {
+                if *on
+                    && key == "webgl"
+                    && slot.get("intensity").and_then(|v| v.as_f64()) == Some(0.0)
+                {
                     slot.insert("intensity".into(), json!(0.0005));
                 }
-                if *on && key == "client_rects" && slot.get("max_offset").and_then(|v| v.as_f64()) == Some(0.0) {
+                if *on
+                    && key == "client_rects"
+                    && slot.get("max_offset").and_then(|v| v.as_f64()) == Some(0.0)
+                {
                     slot.insert("max_offset".into(), json!(1));
                 }
             }
@@ -578,9 +642,16 @@ struct StartReq {
 /// Launch with CDP; body `{ "headless": true, "password": "…" }`, both optional.
 async fn start_profile(Path(id): Path<String>, body: Option<Json<StartReq>>) -> ApiResult {
     let Json(body) = body.unwrap_or_default();
-    let outcome = crate::launch::launch_profile_unlocked(&id, true, body.headless, 0, "", body.password.as_deref())
-        .await
-        .map_err(fail_locked(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let outcome = crate::launch::launch_profile_unlocked(
+        &id,
+        true,
+        body.headless,
+        0,
+        "",
+        body.password.as_deref(),
+    )
+    .await
+    .map_err(fail_locked(StatusCode::INTERNAL_SERVER_ERROR))?;
     let headless = body.headless;
     Ok(Json(json!({
         "profile_id": id,
@@ -605,8 +676,8 @@ async fn stop_profile(Path(id): Path<String>) -> ApiResult {
 
 async fn export_cookies(Path(id): Path<String>) -> ApiResult {
     let pass = crate::space::perm::cookies(&id).map_err(fail(StatusCode::FORBIDDEN))?;
-    let cookies = crate::space::cookies::export(&pass)
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let cookies =
+        crate::space::cookies::export(&pass).map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     Ok(Json(json!({ "cookies": cookies })))
 }
 
@@ -635,8 +706,7 @@ async fn list_running() -> Json<Value> {
 }
 
 async fn list_fingerprints() -> ApiResult {
-    let all = crate::fingerprints::list_all()
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let all = crate::fingerprints::list_all().map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     let out: Vec<Value> = all
         .into_iter()
         .map(|e| {
@@ -675,20 +745,20 @@ async fn list_proxies() -> ApiResult {
 
 /// A profile's tag ids.
 fn profile_tags(id: &str) -> Vec<String> {
-    space::tags::list().ok().and_then(|s| s.by_profile.get(id).cloned()).unwrap_or_default()
+    space::tags::list()
+        .ok()
+        .and_then(|s| s.by_profile.get(id).cloned())
+        .unwrap_or_default()
 }
 
-
 async fn list_trash() -> ApiResult {
-    let list = crate::space::trash::list()
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let list = crate::space::trash::list().map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     Ok(Json(serde_json::to_value(list).unwrap_or(Value::Null)))
 }
 
 /// Deletes the archive for good. There is nothing after this.
 async fn purge_trash(Extension(t): Extension<Ticket>, Path(id): Path<String>) -> ApiResult {
-    crate::space::trash::purge(&t, &id)
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    crate::space::trash::purge(&t, &id).map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     crate::notify_store_changed("trash");
     Ok(Json(json!({ "purged": true, "id": id })))
 }
@@ -709,8 +779,7 @@ fn random_fingerprint_for(platform: Option<&str>) -> Result<String, ApiError> {
     let want = platform
         .map(normalize_platform)
         .unwrap_or_else(crate::host_platform);
-    let all = crate::fingerprints::list_all()
-        .map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let all = crate::fingerprints::list_all().map_err(fail(StatusCode::INTERNAL_SERVER_ERROR))?;
     if all.is_empty() {
         return Err(err(StatusCode::NOT_FOUND, "fingerprint library is empty"));
     }
@@ -758,7 +827,10 @@ fn router() -> Router {
         .route("/profiles/:id", get(get_profile).delete(delete_profile))
         .route("/profiles/:id/start", post(start_profile))
         .route("/profiles/:id/stop", post(stop_profile))
-        .route("/profiles/:id/cookies", get(export_cookies).post(import_cookies))
+        .route(
+            "/profiles/:id/cookies",
+            get(export_cookies).post(import_cookies),
+        )
         .route("/running", get(list_running))
         .route("/trash", get(list_trash))
         .route("/trash/:id", delete(purge_trash))
@@ -795,7 +867,10 @@ mod tests {
 
     /// A request as the agent sends it: our Host, no browser headers.
     fn agent(method: &str, path: &str) -> axum::http::request::Builder {
-        Request::builder().method(method).uri(path).header(HOST, API_HOST)
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(HOST, API_HOST)
     }
 
     fn bearer() -> String {
@@ -806,12 +881,21 @@ mod tests {
     async fn send(req: Request<Body>) -> (StatusCode, axum::http::HeaderMap, Value) {
         let res = router().oneshot(req).await.unwrap();
         let (status, headers) = (res.status(), res.headers().clone());
-        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
-        (status, headers, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     fn assert_no_cors(headers: &axum::http::HeaderMap, what: &str) {
-        let cors: Vec<_> = headers.keys().filter(|k| k.as_str().starts_with("access-control-")).collect();
+        let cors: Vec<_> = headers
+            .keys()
+            .filter(|k| k.as_str().starts_with("access-control-"))
+            .collect();
         assert!(cors.is_empty(), "{what} answered with {cors:?}");
     }
 
@@ -826,7 +910,8 @@ mod tests {
     #[tokio::test]
     async fn health_stays_open_to_the_agent() {
         let _serial = crate::migrate::serial();
-        let (status, headers, body) = send(agent("GET", "/health").body(Body::empty()).unwrap()).await;
+        let (status, headers, body) =
+            send(agent("GET", "/health").body(Body::empty()).unwrap()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["name"], "shardx-launcher");
         assert_eq!(body["version"], DRIVER_PROTOCOL_VERSION);
@@ -847,12 +932,24 @@ mod tests {
             ("sec-fetch-mode", "no-cors"),
             ("sec-fetch-dest", "empty"),
         ];
-        for (method, path) in [("GET", "/health"), ("GET", "/profiles"), ("POST", "/profiles/x/start"), ("GET", "/running")] {
+        for (method, path) in [
+            ("GET", "/health"),
+            ("GET", "/profiles"),
+            ("POST", "/profiles/x/start"),
+            ("GET", "/running"),
+        ] {
             for (name, value) in marks {
-                let req = agent(method, path).header(AUTHORIZATION, bearer()).header(name, value).body(Body::empty()).unwrap();
+                let req = agent(method, path)
+                    .header(AUTHORIZATION, bearer())
+                    .header(name, value)
+                    .body(Body::empty())
+                    .unwrap();
                 let (status, headers, body) = send(req).await;
                 assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path} with {name}");
-                assert_eq!(body["error"], "browser_origin_forbidden", "{method} {path} with {name}");
+                assert_eq!(
+                    body["error"], "browser_origin_forbidden",
+                    "{method} {path} with {name}"
+                );
                 assert_no_cors(&headers, path);
             }
         }
@@ -874,8 +971,13 @@ mod tests {
             assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
             assert_no_cors(&headers, path);
             // A bare OPTIONS, no browser header at all, is refused too.
-            let (status, headers, body) = send(agent("OPTIONS", path).body(Body::empty()).unwrap()).await;
-            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("preflight_forbidden")), "{path}");
+            let (status, headers, body) =
+                send(agent("OPTIONS", path).body(Body::empty()).unwrap()).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (StatusCode::FORBIDDEN, Some("preflight_forbidden")),
+                "{path}"
+            );
             assert_no_cors(&headers, path);
         }
     }
@@ -885,18 +987,45 @@ mod tests {
     #[tokio::test]
     async fn a_foreign_host_is_refused() {
         let _serial = crate::migrate::serial();
-        for host in ["localhost:40325", "evil.example", "evil.example:40325", "127.0.0.1", "127.0.0.1:40326", "[::1]:40325", "127.0.0.1:40325.evil.example"] {
+        for host in [
+            "localhost:40325",
+            "evil.example",
+            "evil.example:40325",
+            "127.0.0.1",
+            "127.0.0.1:40326",
+            "[::1]:40325",
+            "127.0.0.1:40325.evil.example",
+        ] {
             for path in ["/health", "/profiles"] {
-                let req = Request::builder().uri(path).header(HOST, host).header(AUTHORIZATION, bearer()).body(Body::empty()).unwrap();
+                let req = Request::builder()
+                    .uri(path)
+                    .header(HOST, host)
+                    .header(AUTHORIZATION, bearer())
+                    .body(Body::empty())
+                    .unwrap();
                 let (status, _, body) = send(req).await;
-                assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("host_forbidden")), "{host} {path}");
+                assert_eq!(
+                    (status, body["error"].as_str()),
+                    (StatusCode::FORBIDDEN, Some("host_forbidden")),
+                    "{host} {path}"
+                );
             }
         }
-        let missing = Request::builder().uri("/health").body(Body::empty()).unwrap();
+        let missing = Request::builder()
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
         assert_eq!(send(missing).await.0, StatusCode::FORBIDDEN);
-        let twice = agent("GET", "/health").header(HOST, "evil.example").body(Body::empty()).unwrap();
+        let twice = agent("GET", "/health")
+            .header(HOST, "evil.example")
+            .body(Body::empty())
+            .unwrap();
         assert_eq!(send(twice).await.0, StatusCode::FORBIDDEN);
-        let absolute = Request::builder().uri("http://evil.example/health").header(HOST, API_HOST).body(Body::empty()).unwrap();
+        let absolute = Request::builder()
+            .uri("http://evil.example/health")
+            .header(HOST, API_HOST)
+            .body(Body::empty())
+            .unwrap();
         assert_eq!(send(absolute).await.0, StatusCode::FORBIDDEN);
     }
 
@@ -921,7 +1050,11 @@ mod tests {
             ("GET", "/proxies"),
         ] {
             let (status, _, _) = send(agent(method, path).body(Body::empty()).unwrap()).await;
-            assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {path} answered without a token");
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} answered without a token"
+            );
         }
     }
 
@@ -949,7 +1082,10 @@ mod tests {
             ("POST", "/trash/x/restore"),
             ("GET", "/fingerprint/new"),
         ] {
-            let req = agent(method, path).header(AUTHORIZATION, bearer()).body(Body::empty()).unwrap();
+            let req = agent(method, path)
+                .header(AUTHORIZATION, bearer())
+                .body(Body::empty())
+                .unwrap();
             let status = send(req).await.0;
             assert!(
                 status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
@@ -962,17 +1098,44 @@ mod tests {
     fn only_short_lived_tokens_from_our_secret_pass() {
         let now = 1_800_000_000;
         assert!(verify_at(SECRET, &mint_at(SECRET, now, now + 60), now));
-        assert!(verify_at(SECRET, &mint_at(SECRET, now, now + 60), now + 89), "exp + 30 s skew");
-        assert!(!verify_at(SECRET, &mint_at(SECRET, now, now + 60), now + 90), "past exp + skew");
-        assert!(verify_at(SECRET, &mint_at(SECRET, now + 30, now + 90), now), "iat 30 s ahead");
-        assert!(!verify_at(SECRET, &mint_at(SECRET, now + 31, now + 91), now), "iat beyond skew");
-        assert!(!verify_at(SECRET, &mint_at(SECRET, now, now + 61), now), "longer than 60 s");
-        assert!(!verify_at(SECRET, &mint_at(SECRET, now, now + 315_360_000), now), "the old 10-year token");
-        assert!(!verify_at(SECRET, &mint_at(SECRET, now, now), now), "exp not after iat");
+        assert!(
+            verify_at(SECRET, &mint_at(SECRET, now, now + 60), now + 89),
+            "exp + 30 s skew"
+        );
+        assert!(
+            !verify_at(SECRET, &mint_at(SECRET, now, now + 60), now + 90),
+            "past exp + skew"
+        );
+        assert!(
+            verify_at(SECRET, &mint_at(SECRET, now + 30, now + 90), now),
+            "iat 30 s ahead"
+        );
+        assert!(
+            !verify_at(SECRET, &mint_at(SECRET, now + 31, now + 91), now),
+            "iat beyond skew"
+        );
+        assert!(
+            !verify_at(SECRET, &mint_at(SECRET, now, now + 61), now),
+            "longer than 60 s"
+        );
+        assert!(
+            !verify_at(SECRET, &mint_at(SECRET, now, now + 315_360_000), now),
+            "the old 10-year token"
+        );
+        assert!(
+            !verify_at(SECRET, &mint_at(SECRET, now, now), now),
+            "exp not after iat"
+        );
         let other = "fedcba9876543210fedcba9876543210-other";
-        assert!(!verify_at(other, &mint_at(SECRET, now, now + 60), now), "another secret");
+        assert!(
+            !verify_at(other, &mint_at(SECRET, now, now + 60), now),
+            "another secret"
+        );
         let short = "too-short-secret";
-        assert!(!verify_at(short, &mint_at(short, now, now + 60), now), "secret under 32 bytes");
+        assert!(
+            !verify_at(short, &mint_at(short, now, now + 60), now),
+            "secret under 32 bytes"
+        );
     }
 
     /// The token the agent signs (Go `shardx.TokenFromSecret`): header
@@ -998,9 +1161,15 @@ mod tests {
     async fn a_long_lived_token_is_refused_over_http() {
         let _serial = crate::migrate::serial();
         set_secret(SECRET);
-        let req = agent("GET", "/running").header(AUTHORIZATION, format!("Bearer {}", mint(SECRET, 600))).body(Body::empty()).unwrap();
+        let req = agent("GET", "/running")
+            .header(AUTHORIZATION, format!("Bearer {}", mint(SECRET, 600)))
+            .body(Body::empty())
+            .unwrap();
         assert_eq!(send(req).await.0, StatusCode::UNAUTHORIZED);
-        let req = agent("GET", "/running").header(AUTHORIZATION, bearer()).body(Body::empty()).unwrap();
+        let req = agent("GET", "/running")
+            .header(AUTHORIZATION, bearer())
+            .body(Body::empty())
+            .unwrap();
         assert_eq!(send(req).await.0, StatusCode::OK);
     }
 
@@ -1010,17 +1179,32 @@ mod tests {
         let _serial = crate::migrate::serial();
         assert!(crate::migrate::hold());
         let mut answers = Vec::new();
-        for (method, path) in [("GET", "/health"), ("GET", "/profiles"), ("POST", "/profiles/x/start")] {
-            answers.push(send(agent(method, path).body(Body::empty()).unwrap()).await.0);
+        for (method, path) in [
+            ("GET", "/health"),
+            ("GET", "/profiles"),
+            ("POST", "/profiles/x/start"),
+        ] {
+            answers.push(
+                send(agent(method, path).body(Body::empty()).unwrap())
+                    .await
+                    .0,
+            );
         }
         crate::migrate::release();
-        assert!(answers.iter().all(|s| *s == StatusCode::SERVICE_UNAVAILABLE), "{answers:?}");
+        assert!(
+            answers
+                .iter()
+                .all(|s| *s == StatusCode::SERVICE_UNAVAILABLE),
+            "{answers:?}"
+        );
     }
 
     async fn authed(method: &str, path: &str, body: Option<Value>) -> (StatusCode, Value) {
         let req = agent(method, path).header(AUTHORIZATION, bearer());
         let req = match body {
-            Some(b) => req.header("content-type", "application/json").body(Body::from(b.to_string())),
+            Some(b) => req
+                .header("content-type", "application/json")
+                .body(Body::from(b.to_string())),
             None => req.body(Body::empty()),
         }
         .unwrap();
@@ -1034,22 +1218,42 @@ mod tests {
     async fn the_agents_profile_lifecycle_still_works() {
         let _serial = crate::migrate::serial();
         let _root = crate::store::test_root("api-lifecycle").with_config();
-        let (status, made) = authed("POST", "/profiles", Some(json!({ "name": "lotusrain:t1", "fingerprint": {} }))).await;
+        let (status, made) = authed(
+            "POST",
+            "/profiles",
+            Some(json!({ "name": "lotusrain:t1", "fingerprint": {} })),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{made}");
         let id = made["id"].as_str().unwrap().to_string();
         let path = format!("/profiles/{id}");
         let (status, got) = authed("GET", &path, None).await;
-        assert_eq!((status, got["name"].as_str()), (StatusCode::OK, Some("lotusrain:t1")), "{got}");
+        assert_eq!(
+            (status, got["name"].as_str()),
+            (StatusCode::OK, Some("lotusrain:t1")),
+            "{got}"
+        );
         let (_, all) = authed("GET", "/profiles", None).await;
         assert_eq!(all.as_array().map(Vec::len), Some(1), "{all}");
-        assert_eq!(authed("GET", "/running", None).await, (StatusCode::OK, json!([])));
+        assert_eq!(
+            authed("GET", "/running", None).await,
+            (StatusCode::OK, json!([]))
+        );
 
         let (status, got) = authed("DELETE", &path, None).await;
-        assert_eq!((status, got["trashed"].as_bool()), (StatusCode::OK, Some(true)), "{got}");
+        assert_eq!(
+            (status, got["trashed"].as_bool()),
+            (StatusCode::OK, Some(true)),
+            "{got}"
+        );
         let (_, trash) = authed("GET", "/trash", None).await;
         assert_eq!(trash.as_array().map(Vec::len), Some(1), "{trash}");
         let (status, got) = authed("DELETE", &format!("/trash/{id}"), None).await;
-        assert_eq!((status, got["purged"].as_bool()), (StatusCode::OK, Some(true)), "{got}");
+        assert_eq!(
+            (status, got["purged"].as_bool()),
+            (StatusCode::OK, Some(true)),
+            "{got}"
+        );
         let (_, trash) = authed("GET", "/trash", None).await;
         assert_eq!(trash, json!([]));
     }

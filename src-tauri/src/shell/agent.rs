@@ -22,7 +22,9 @@ pub fn data_dir() -> Result<PathBuf> {
     let base = dirs::data_local_dir();
     #[cfg(not(windows))]
     let base = dirs::config_dir();
-    Ok(base.context("agent data dir unavailable")?.join("LotusRain Proxy"))
+    Ok(base
+        .context("agent data dir unavailable")?
+        .join("LotusRain Proxy"))
 }
 
 /// `LOTUS_AGENT_PATH` (development), else the agent beside this executable.
@@ -32,7 +34,11 @@ pub fn agent_path() -> Result<PathBuf> {
     }
     let exe = std::env::current_exe()?;
     let dir = exe.parent().context("executable has no folder")?;
-    let name = if cfg!(windows) { "agent.exe" } else { "lotusrain-agent" };
+    let name = if cfg!(windows) {
+        "agent.exe"
+    } else {
+        "lotusrain-agent"
+    };
     Ok(dir.join(name))
 }
 
@@ -64,7 +70,10 @@ pub fn spawn() -> Result<()> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    *slot = Some(cmd.spawn().with_context(|| format!("starting {}", agent.display()))?);
+    *slot = Some(
+        cmd.spawn()
+            .with_context(|| format!("starting {}", agent.display()))?,
+    );
     Ok(())
 }
 
@@ -123,12 +132,21 @@ fn check_loopback(raw: &str) -> Result<()> {
 }
 
 fn client(timeout: Duration) -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder().no_proxy().timeout(timeout).redirect(reqwest::redirect::Policy::none()).build()?)
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?)
 }
 
 /// One IPC call. The agent answers `{"data": …}` or `{"error": code}`; an
 /// error comes back as its code alone.
-pub async fn call(method: &str, path: &str, body: Option<&Value>, timeout: Duration) -> Result<Value> {
+pub async fn call(
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    timeout: Duration,
+) -> Result<Value> {
     let info = instance()?;
     let url = format!("{}{}", info.url.trim_end_matches('/'), path);
     let c = client(timeout)?;
@@ -146,7 +164,10 @@ pub async fn call(method: &str, path: &str, body: Option<&Value>, timeout: Durat
     let status = res.status();
     let v: Value = res.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        let code = v.get("error").and_then(Value::as_str).unwrap_or("agent_request_failed");
+        let code = v
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("agent_request_failed");
         bail!("{}", sanitize_code(code));
     }
     Ok(v.get("data").cloned().unwrap_or(Value::Null))
@@ -154,7 +175,12 @@ pub async fn call(method: &str, path: &str, body: Option<&Value>, timeout: Durat
 
 /// Only short snake_case codes cross into the views.
 pub fn sanitize_code(code: &str) -> String {
-    if !code.is_empty() && code.len() <= 80 && code.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+    if !code.is_empty()
+        && code.len() <= 80
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
         code.to_string()
     } else {
         "operation_failed".into()

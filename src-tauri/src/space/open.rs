@@ -32,9 +32,11 @@ const BUDGET: u64 = 252 * 1024 * 1024;
 /// How long a quit waits for open profiles to be saved.
 pub const QUIT_WAIT: Duration = Duration::from_secs(120);
 /// Why a start finds the profile still busy here.
-pub const BUSY: &str = "this profile is still opening or being saved here: start it again in a moment";
+pub const BUSY: &str =
+    "this profile is still opening or being saved here: start it again in a moment";
 /// Why Delete all data and a data move wait: an open copy lives under the data folder.
-pub const STILL_OPEN: &str = "A team profile is open or being saved here. Close it, wait until it is saved, then try again.";
+pub const STILL_OPEN: &str =
+    "A team profile is open or being saved here. Close it, wait until it is saved, then try again.";
 
 /// How long a reaper tries to send a session back once the browser is closed;
 /// what it could not send is kept for the next start.
@@ -56,17 +58,26 @@ pub struct Home {
 
 impl Home {
     pub fn team(team: &str) -> Home {
-        Home { team: team.to_string(), mine: false }
+        Home {
+            team: team.to_string(),
+            mine: false,
+        }
     }
 
     /// The person's own space on that server, which sync follows.
     pub fn mine(team: &str) -> Home {
-        Home { team: team.to_string(), mine: true }
+        Home {
+            team: team.to_string(),
+            mine: true,
+        }
     }
 
     fn path(&self, id: &str, what: &str) -> Result<String, TeamError> {
         let seg = super::admin::seg(id).map_err(|e| TeamError::Garbled(e.to_string()))?;
-        Ok(format!("{}/profiles/{seg}/{what}", if self.mine { "/me" } else { "" }))
+        Ok(format!(
+            "{}/profiles/{seg}/{what}",
+            if self.mine { "/me" } else { "" }
+        ))
     }
 
     fn client(&self) -> Result<TeamClient, CmdError> {
@@ -79,7 +90,11 @@ impl Home {
         } else {
             TeamClient::for_team(&self.team)
         };
-        c.map_err(|e| CmdError::Refused { status: 403, code: "no_access".into(), message: format!("{e:#}") })
+        c.map_err(|e| CmdError::Refused {
+            status: 403,
+            code: "no_access".into(),
+            message: format!("{e:#}"),
+        })
     }
 
     /// Its folder under `team-open`.
@@ -184,11 +199,16 @@ struct State {
 
 fn open_now() -> MutexGuard<'static, Vec<Arc<Session>>> {
     static OPEN: OnceLock<Mutex<Vec<Arc<Session>>>> = OnceLock::new();
-    OPEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+    OPEN.get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 fn find(home: &Home, id: &str) -> Option<Arc<Session>> {
-    open_now().iter().find(|s| s.home == *home && s.id == id).cloned()
+    open_now()
+        .iter()
+        .find(|s| s.home == *home && s.id == id)
+        .cloned()
 }
 
 fn unregister(s: &Arc<Session>) {
@@ -209,7 +229,12 @@ pub struct Listed {
 pub fn listed() -> Vec<Listed> {
     open_now()
         .iter()
-        .map(|s| Listed { team_id: s.home.team.clone(), profile_id: s.id.clone(), name: s.name.clone(), mine: s.home.mine })
+        .map(|s| Listed {
+            team_id: s.home.team.clone(),
+            profile_id: s.id.clone(),
+            name: s.name.clone(),
+            mine: s.home.mine,
+        })
         .collect()
 }
 
@@ -239,7 +264,11 @@ pub fn close(home: &Home, id: &str, end: End) {
 
 /// Ask every profile of a team open here to close; never the person's own synced ones.
 pub fn close_team(team: &str, end: End) {
-    let all: Vec<_> = open_now().iter().filter(|s| s.home.team == team && !s.home.mine).cloned().collect();
+    let all: Vec<_> = open_now()
+        .iter()
+        .filter(|s| s.home.team == team && !s.home.mine)
+        .cloned()
+        .collect();
     for s in all {
         s.ask(end);
     }
@@ -248,7 +277,11 @@ pub fn close_team(team: &str, end: End) {
 /// Close a team's profiles with upload and wait for them, up to `limit`.
 pub async fn close_team_and_wait(team: &str, limit: Duration) {
     close_team(team, End::Upload);
-    let gone = || !open_now().iter().any(|s| s.home.team == team && !s.home.mine);
+    let gone = || {
+        !open_now()
+            .iter()
+            .any(|s| s.home.team == team && !s.home.mine)
+    };
     wait(gone, limit).await;
 }
 
@@ -268,7 +301,10 @@ pub async fn close_all(limit: Duration) {
             st.base.is_some() && st.end != Some(End::Discard)
         };
         if s.own.is_none() && whole {
-            eprintln!("[launcher] {}: not saved in time; kept here and sent at the next start", s.id);
+            eprintln!(
+                "[launcher] {}: not saved in time; kept here and sent at the next start",
+                s.id
+            );
             s.stop_watch().await;
             s.take_copy().keep();
             unregister(&s);
@@ -282,7 +318,11 @@ pub async fn close_all(limit: Duration) {
         unregister(&s);
         // A synced profile's own data stays, and goes up at the next sync.
         if s.own.is_some() {
-            super::sync::session_closed(&s.id, &Outcome::NotSaved("not saved in time".into()), false);
+            super::sync::session_closed(
+                &s.id,
+                &Outcome::NotSaved("not saved in time".into()),
+                false,
+            );
         }
     }
 }
@@ -296,12 +336,20 @@ async fn wait(done: impl Fn() -> bool, limit: Duration) {
 
 /// The passes a team profile's start needs, judged on the server's row now:
 /// Start, and Cookies too when debugging is on.
-pub async fn passes(team: &str, id: &str, cdp: bool) -> Result<(Granted<Start>, Option<Granted<Cookies>>)> {
+pub async fn passes(
+    team: &str,
+    id: &str,
+    cdp: bool,
+) -> Result<(Granted<Start>, Option<Granted<Cookies>>)> {
     let client = Home::team(team).client()?;
     // Just after the launcher started, its live channel may not have brought one yet.
     if perm::held_epoch(team).is_none() {
-        let issued = client.permission().await.map_err(|e| from_team(e.into(), id))?;
-        perm::accept(team, &issued.permission).map_err(|e| anyhow::anyhow!("the team's permission did not check out: {e}"))?;
+        let issued = client
+            .permission()
+            .await
+            .map_err(|e| from_team(e.into(), id))?;
+        perm::accept(team, &issued.permission)
+            .map_err(|e| anyhow::anyhow!("the team's permission did not check out: {e}"))?;
     }
     let mut seen = looked(&client, team, id).await?;
     // A profile made a moment ago moves the rules: looked up again under the
@@ -310,20 +358,34 @@ pub async fn passes(team: &str, id: &str, cdp: bool) -> Result<(Granted<Start>, 
         seen = looked(&client, team, id).await?;
     }
     let start = perm::team_pass::<Start>(team, &seen)?;
-    let cookies = if cdp { Some(perm::team_pass::<Cookies>(team, &seen)?) } else { None };
+    let cookies = if cdp {
+        Some(perm::team_pass::<Cookies>(team, &seen)?)
+    } else {
+        None
+    };
     Ok((start, cookies))
 }
 
 /// The profile as the team's rows show it to this member, under the rules held now.
 async fn looked(c: &super::client::TeamClient, team: &str, id: &str) -> Result<perm::Seen> {
-    let seen = perm::look(c, team, &[id]).await.map_err(|e| from_team(e, id))?;
+    let seen = perm::look(c, team, &[id])
+        .await
+        .map_err(|e| from_team(e, id))?;
     seen.into_iter()
         .find(|s| s.id() == id)
         .ok_or_else(|| CmdError::Missing(format!("no profile {id} in this team")).into())
 }
 
 fn doing(id: &str) -> Doing<'_> {
-    Doing { need: Need { right: "start", on: "profile" }, what: "profile", id, had: None }
+    Doing {
+        need: Need {
+            right: "start",
+            on: "profile",
+        },
+        what: "profile",
+        id,
+        had: None,
+    }
 }
 
 fn from_team(e: anyhow::Error, id: &str) -> anyhow::Error {
@@ -354,13 +416,25 @@ pub async fn open_team(team: &str, start: &Granted<Start>, cdp: bool) -> Result<
     let front = session.begin().await?;
     let proxy = bound_proxy(id, &front)?;
     session.unpack(front.size).await?;
-    Ok(Opened { stored, proxy, udd: session.udd(), ext: session.work.join("ext"), hand })
+    Ok(Opened {
+        stored,
+        proxy,
+        udd: session.udd(),
+        ext: session.work.join("ext"),
+        hand,
+    })
 }
 
 /// A personal profile synced through `/me`, opened on its own browser data at
 /// `udd`: the lease taken and kept alive. Answers the server's session revision;
 /// the caller then takes the server's session or keeps its own.
-pub async fn open_own(team: &str, id: &str, name: &str, udd: PathBuf, cdp: bool) -> Result<(Handoff, u64)> {
+pub async fn open_own(
+    team: &str,
+    id: &str,
+    name: &str,
+    udd: PathBuf,
+    cdp: bool,
+) -> Result<(Handoff, u64)> {
     let session = Session::claim(Home::mine(team), id, name, cdp, Some(udd))?;
     let hand = Handoff(Some(session.clone()));
     session.take_lease().await?;
@@ -371,7 +445,13 @@ pub async fn open_own(team: &str, id: &str, name: &str, udd: PathBuf, cdp: bool)
 /// A synced profile's session sent up while nothing has it open: its own data
 /// as made from `base`, under a lease taken for the upload. How it went is told
 /// to sync as a close is.
-pub async fn upload_own(team: &str, id: &str, name: &str, udd: PathBuf, base: u64) -> Result<Outcome> {
+pub async fn upload_own(
+    team: &str,
+    id: &str,
+    name: &str,
+    udd: PathBuf,
+    base: u64,
+) -> Result<Outcome> {
     let session = Session::claim(Home::mine(team), id, name, false, Some(udd))?;
     let hand = Handoff(Some(session.clone()));
     session.take_lease().await?;
@@ -382,7 +462,11 @@ pub async fn upload_own(team: &str, id: &str, name: &str, udd: PathBuf, base: u6
 /// Synced personal profiles open here (all, or the one `only`) stop syncing:
 /// the lease goes back now, and the browser, left running, closes with nothing sent.
 pub fn let_go_mine(only: Option<&str>) {
-    let all: Vec<_> = open_now().iter().filter(|s| s.home.mine && only.is_none_or(|id| s.id == id)).cloned().collect();
+    let all: Vec<_> = open_now()
+        .iter()
+        .filter(|s| s.home.mine && only.is_none_or(|id| s.id == id))
+        .cloned()
+        .collect();
     for s in all {
         s.unsync();
         super::live::spawn(async move {
@@ -395,10 +479,18 @@ pub fn let_go_mine(only: Option<&str>) {
 /// The proxy the server sent with the session. Bound to one that is not there
 /// is an error: without it the profile would go out on this computer's IP.
 fn bound_proxy(id: &str, front: &SessionFront) -> Result<Option<ProxyEntry>> {
-    let Some(bound) = front.proxy_id.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+    let Some(bound) = front
+        .proxy_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    else {
         return Ok(None);
     };
-    let sent = front.proxy.clone().and_then(|v| serde_json::from_value::<remote::ProxyWithData>(v).ok());
+    let sent = front
+        .proxy
+        .clone()
+        .and_then(|v| serde_json::from_value::<remote::ProxyWithData>(v).ok());
     match sent.map(|p| remote::proxy(&p.row, Some(&p.data))) {
         Some(e) if !e.host.trim().is_empty() && e.port != 0 => Ok(Some(e)),
         _ => bail!(
@@ -419,10 +511,15 @@ impl Handoff {
 
     /// A synced profile: the server's session, unpacked over its own data.
     pub async fn take_servers(&self) -> Result<()> {
-        let Some(s) = &self.0 else { bail!("the profile is not open") };
+        let Some(s) = &self.0 else {
+            bail!("the profile is not open")
+        };
         let path = s.home.path(&s.id, "session").map_err(|e| s.refusal(e))?;
         let c = s.home.client()?;
-        let front = c.download(&path, &s.archive()).await.map_err(|e| s.refusal(e))?;
+        let front = c
+            .download(&path, &s.archive())
+            .await
+            .map_err(|e| s.refusal(e))?;
         let (zip, udd, incoming) = (s.archive(), s.udd(), s.work.join("incoming"));
         let size = front.size;
         tokio::task::spawn_blocking(move || -> Result<()> {
@@ -444,7 +541,9 @@ impl Handoff {
 
     /// A synced profile: its own data stays as it is, made from revision `base`.
     pub fn keep_mine(&self, base: u64) -> Result<()> {
-        let Some(s) = &self.0 else { bail!("the profile is not open") };
+        let Some(s) = &self.0 else {
+            bail!("the profile is not open")
+        };
         s.state().base = Some(base);
         s.mark()
     }
@@ -473,7 +572,13 @@ impl Drop for Handoff {
 impl Session {
     /// Take the profile's place on this device: its folder made fresh, marked,
     /// watched by a reaper, registered.
-    fn claim(home: Home, id: &str, name: &str, cdp: bool, own: Option<PathBuf>) -> Result<Arc<Session>> {
+    fn claim(
+        home: Home,
+        id: &str,
+        name: &str,
+        cdp: bool,
+        own: Option<PathBuf>,
+    ) -> Result<Arc<Session>> {
         let work = root()?.join(home.folder()).join(safe(id));
         let mut all = open_now();
         if all.iter().any(|s| s.home == home && s.id == id) {
@@ -503,25 +608,37 @@ impl Session {
             nonce: uuid::Uuid::new_v4().simple().to_string(),
             work,
             own,
-            state: Mutex::new(State { dir: Some(dir), ..Default::default() }),
+            state: Mutex::new(State {
+                dir: Some(dir),
+                ..Default::default()
+            }),
             nudge: Notify::new(),
             renewing: tokio::sync::Mutex::new(()),
         });
         s.mark()?;
         // Without one, a launcher that is killed leaves the browser up and nobody renewing its lease.
-        let reaper = super::reap::spawn(&s.work).map_err(|e| anyhow::anyhow!("the profile's guard process did not start: {e}"))?;
+        let reaper = super::reap::spawn(&s.work)
+            .map_err(|e| anyhow::anyhow!("the profile's guard process did not start: {e}"))?;
         s.state().reaper = Some(reaper);
         all.push(s.clone());
         drop(all);
         if !s.home.mine {
-            super::live::opened(&s.home.team, super::live::Open { id: s.id.clone(), cdp });
+            super::live::opened(
+                &s.home.team,
+                super::live::Open {
+                    id: s.id.clone(),
+                    cdp,
+                },
+            );
         }
         Ok(s)
     }
 
     /// A copy a dead launcher left, taken over to be closed under its lock.
     fn adopt(m: Marker, work: PathBuf, reaping: fs::File) -> Arc<Session> {
-        let dir = Materialized { path: Some(work.clone()) };
+        let dir = Materialized {
+            path: Some(work.clone()),
+        };
         // It held the lease when it died, maybe still, and its browser ran.
         let state = State {
             base: m.base,
@@ -533,7 +650,11 @@ impl Session {
             ..Default::default()
         };
         Arc::new(Session {
-            name: if m.name.is_empty() { m.id.clone() } else { m.name },
+            name: if m.name.is_empty() {
+                m.id.clone()
+            } else {
+                m.name
+            },
             home: m.home,
             id: m.id,
             nonce: m.nonce,
@@ -582,7 +703,11 @@ impl Session {
     /// The copy, its lock and its tie, taken to be wiped or kept.
     fn take_copy(&self) -> Copy {
         let mut st = self.state();
-        Copy { _tie: st.tie.take(), dir: st.dir.take(), _reaping: st.reaping.take() }
+        Copy {
+            _tie: st.tie.take(),
+            dir: st.dir.take(),
+            _reaping: st.reaping.take(),
+        }
     }
 
     fn refusal(&self, e: TeamError) -> anyhow::Error {
@@ -592,8 +717,13 @@ impl Session {
     /// The lease, kept alive from here on.
     async fn take_lease(self: &Arc<Self>) -> Result<()> {
         let c = self.home.client()?;
-        let lease = self.home.path(&self.id, "lease").map_err(|e| self.refusal(e))?;
-        c.call(Method::POST, &lease, None).await.map_err(|e| self.refusal(e))?;
+        let lease = self
+            .home
+            .path(&self.id, "lease")
+            .map_err(|e| self.refusal(e))?;
+        c.call(Method::POST, &lease, None)
+            .await
+            .map_err(|e| self.refusal(e))?;
         self.state().leased = true;
         let watcher = self.clone();
         super::live::spawn(watcher.watch());
@@ -608,7 +738,11 @@ impl Session {
             session_rev: u64,
         }
         let c = self.home.client()?;
-        let path = format!("{}/profiles/{}", if self.home.mine { "/me" } else { "" }, super::admin::seg(&self.id)?);
+        let path = format!(
+            "{}/profiles/{}",
+            if self.home.mine { "/me" } else { "" },
+            super::admin::seg(&self.id)?
+        );
         let row: Row = c.get(&path).await.map_err(|e| self.refusal(e))?;
         Ok(row.session_rev)
     }
@@ -617,8 +751,14 @@ impl Session {
     async fn begin(self: &Arc<Self>) -> Result<SessionFront> {
         self.take_lease().await?;
         let c = self.home.client()?;
-        let path = self.home.path(&self.id, "session").map_err(|e| self.refusal(e))?;
-        let front = c.download(&path, &self.archive()).await.map_err(|e| self.refusal(e))?;
+        let path = self
+            .home
+            .path(&self.id, "session")
+            .map_err(|e| self.refusal(e))?;
+        let front = c
+            .download(&path, &self.archive())
+            .await
+            .map_err(|e| self.refusal(e))?;
         self.state().base = Some(front.session_rev);
         Ok(front)
     }
@@ -691,8 +831,13 @@ impl Session {
     }
 
     async fn renew(&self) -> Result<(), TeamError> {
-        let c = self.home.client().map_err(|e| TeamError::Garbled(e.to_string()))?;
-        c.call(Method::POST, &self.home.path(&self.id, "lease")?, None).await.map(|_| ())
+        let c = self
+            .home
+            .client()
+            .map_err(|e| TeamError::Garbled(e.to_string()))?;
+        c.call(Method::POST, &self.home.path(&self.id, "lease")?, None)
+            .await
+            .map(|_| ())
     }
 
     /// The team's permission: a personal space has none to run out.
@@ -726,7 +871,10 @@ impl Session {
                 Ok(()) => {}
                 Err(e) if e.code() == Some(&Code::Leased) => self.lost_lease(&e),
                 // Gone from the person's own space: it runs on here, unsynced.
-                Err(e) if self.own.is_some() && matches!(e.code(), Some(Code::Forbidden | Code::NotFound)) => {
+                Err(e)
+                    if self.own.is_some()
+                        && matches!(e.code(), Some(Code::Forbidden | Code::NotFound)) =>
+                {
                     eprintln!("[sync] {}: {e}; it is not synced any more", self.id);
                     self.unsync();
                     self.state().leased = false;
@@ -734,7 +882,10 @@ impl Session {
                 }
                 Err(e) if matches!(e.code(), Some(Code::Forbidden | Code::NotFound)) => {
                     if self.ask(End::Upload) {
-                        eprintln!("[launcher] {}: the team took it back ({e}); closing", self.id);
+                        eprintln!(
+                            "[launcher] {}: the team took it back ({e}); closing",
+                            self.id
+                        );
                     }
                 }
                 Err(e) => eprintln!("[launcher] {}: lease not renewed: {e}", self.id),
@@ -761,7 +912,10 @@ impl Session {
         let Some(left) = self.time_left() else { return };
         if left.is_zero() {
             if self.ask(End::Upload) {
-                eprintln!("[launcher] {}: the team's permission ran out; closing", self.id);
+                eprintln!(
+                    "[launcher] {}: the team's permission ran out; closing",
+                    self.id
+                );
             }
         } else if left <= WARN_BEFORE && !std::mem::replace(&mut self.state().warned, true) {
             let text = match perm::clock_ahead(&self.home.team) {
@@ -871,7 +1025,11 @@ impl Session {
         }
         // Taken over while its browser ran: what was done here was not sent.
         if self.own.is_some() {
-            let outcome = if lost && ran { Outcome::Stale } else { outcome.clone() };
+            let outcome = if lost && ran {
+                Outcome::Stale
+            } else {
+                outcome.clone()
+            };
             super::sync::session_closed(&self.id, &outcome, ran);
         }
         self.tell(&outcome);
@@ -892,7 +1050,11 @@ impl Session {
             Ok(Err(e)) => return Outcome::NotSaved(format!("{e:#}")),
             Err(e) => return Outcome::NotSaved(e.to_string()),
         };
-        eprintln!("[launcher] {}: session packed, {} KB", self.id, packed.size / 1024);
+        eprintln!(
+            "[launcher] {}: session packed, {} KB",
+            self.id,
+            packed.size / 1024
+        );
         if !packed.left_out.is_empty() {
             crate::notify_warning(format!(
                 "{}: its session was over 256 MB, so the storage of {} site(s) was left out.",
@@ -917,7 +1079,9 @@ impl Session {
             }
             let sent = self.send_once(base);
             let got = match by {
-                Some(by) => tokio::time::timeout_at(by, sent).await.unwrap_or_else(|_| Err(LATE.into())),
+                Some(by) => tokio::time::timeout_at(by, sent)
+                    .await
+                    .unwrap_or_else(|_| Err(LATE.into())),
                 None => sent.await,
             };
             let why = match got {
@@ -937,7 +1101,11 @@ impl Session {
                     self.name
                 ));
             }
-            eprintln!("[launcher] {}: session not sent ({why}); again in {} s", self.id, wait.as_secs());
+            eprintln!(
+                "[launcher] {}: session not sent ({why}); again in {} s",
+                self.id,
+                wait.as_secs()
+            );
             tokio::time::sleep(wait).await;
             wait = (wait * 2).min(RESEND_LAST);
             // Run out on the server meanwhile: taken again, unless another device has it now.
@@ -1053,12 +1221,19 @@ fn root() -> Result<PathBuf> {
 
 /// An id as a folder name: as it is when plain, else a digest of it.
 pub(super) fn safe(s: &str) -> String {
-    let plain = !s.is_empty() && s.len() <= 100 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let plain = !s.is_empty()
+        && s.len() <= 100
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if plain {
         return s.to_string();
     }
     use sha2::{Digest, Sha256};
-    Sha256::digest(s.as_bytes()).iter().take(16).map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(s.as_bytes())
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// A folder wiped when it goes, and its parents once they are empty.
@@ -1139,9 +1314,15 @@ fn wipe(dir: &Path) {
 /// at `dir` meanwhile is never touched. Answers what is left of it.
 fn clear(dir: &Path) -> Option<PathBuf> {
     let aside = dir.with_file_name(format!(".gone-{}", uuid::Uuid::new_v4().simple()));
-    let aside_now = dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with(".gone-"));
+    let aside_now = dir
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with(".gone-"));
     let inside = !aside_now && root().is_ok_and(|r| dir.starts_with(&r) && dir != r);
-    let at = if inside && fs::rename(dir, &aside).is_ok() { aside } else { dir.to_path_buf() };
+    let at = if inside && fs::rename(dir, &aside).is_ok() {
+        aside
+    } else {
+        dir.to_path_buf()
+    };
     match remove_all(&at) {
         Ok(()) => {
             prune(&at);
@@ -1176,7 +1357,10 @@ fn retry_later(dir: PathBuf) {
     static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     left().push(dir);
     // A reaper tries again in its own loop; a test, by hand.
-    if cfg!(test) || super::reap::in_reaper() || RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if cfg!(test)
+        || super::reap::in_reaper()
+        || RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
         return;
     }
     super::live::spawn(async {
@@ -1231,7 +1415,9 @@ pub fn sweep_team(team: &str) {
 
 fn sweep_where(pick: impl Fn(&Home) -> bool, everything: bool) {
     let Ok(root) = root() else { return };
-    let Ok(homes) = fs::read_dir(&root) else { return };
+    let Ok(homes) = fs::read_dir(&root) else {
+        return;
+    };
     let mut orphans = Vec::new();
     let mut reaped = Vec::new();
     for h in homes.flatten() {
@@ -1286,14 +1472,18 @@ async fn after_its_reaper(dir: PathBuf) {
         if read_marker(&dir).is_none() {
             return;
         }
-        let Some(lock) = take_reaping(&dir) else { continue };
+        let Some(lock) = take_reaping(&dir) else {
+            continue;
+        };
         let taken = {
             let mut open = open_now();
-            read_marker(&dir).filter(|m| find_in(&open, &m.home, &m.id).is_none()).map(|m| {
-                let s = Session::adopt(m, dir, lock);
-                open.push(s.clone());
-                s
-            })
+            read_marker(&dir)
+                .filter(|m| find_in(&open, &m.home, &m.id).is_none())
+                .map(|m| {
+                    let s = Session::adopt(m, dir, lock);
+                    open.push(s.clone());
+                    s
+                })
         };
         if let Some(s) = taken {
             s.close_orphan(None).await;
@@ -1346,17 +1536,28 @@ impl Session {
 impl Session {
     /// Its team re-issued the token: the copy waits for the new invite.
     fn waits_for_invite(&self) -> bool {
-        !self.home.mine && crate::team::link(&self.home.team).ok().flatten().is_some_and(|l| l.needs_invite && !l.revoked)
+        !self.home.mine
+            && crate::team::link(&self.home.team)
+                .ok()
+                .flatten()
+                .is_some_and(|l| l.needs_invite && !l.revoked)
     }
 }
 
 fn read_marker(dir: &Path) -> Option<Marker> {
-    fs::read(dir.join(MARKER)).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    fs::read(dir.join(MARKER))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 /// The lock on a copy whose launcher died; None while someone else closes it.
 fn take_reaping(dir: &Path) -> Option<fs::File> {
-    let f = fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(REAPING)).ok()?;
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(REAPING))
+        .ok()?;
     match f.try_lock() {
         Ok(()) => Some(f),
         Err(fs::TryLockError::WouldBlock) => None,
@@ -1388,8 +1589,12 @@ pub(super) fn still_there(dir: &Path, nonce: &str) -> bool {
 /// would close it, the upload cut off at 20 s. False when it was not this
 /// reaper's to close (opened again since, or a sweep is on it).
 pub(super) async fn reap(dir: PathBuf, nonce: &str) -> bool {
-    let Some(m) = read_marker(&dir).filter(|m| m.nonce == nonce) else { return false };
-    let Some(lock) = take_reaping(&dir) else { return false };
+    let Some(m) = read_marker(&dir).filter(|m| m.nonce == nonce) else {
+        return false;
+    };
+    let Some(lock) = take_reaping(&dir) else {
+        return false;
+    };
     let s = Session::adopt(m, dir, lock);
     let outcome = s.clone().close_orphan(Some(REAP_UPLOAD)).await;
     eprintln!("[reaper] {}: {outcome:?}", s.id);
