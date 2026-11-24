@@ -318,6 +318,7 @@ pub async fn shell_set_system_proxy(webview: Webview, on: bool) -> Result<(), St
 pub fn shell_summary(webview: Webview) -> Result<String, String> {
     local_only(&webview)?;
     let s = super::hub_status();
+    let driver_ready = super::with(|sh| sh.status.get("driver_ready").and_then(Value::as_bool));
     let agent_version = super::with(|sh| {
         sh.status
             .get("version")
@@ -338,8 +339,8 @@ pub fn shell_summary(webview: Webview) -> Result<String, String> {
         std::env::consts::ARCH,
         field("authorization"),
         field("connection"),
-        field("driver_ready"),
-        field("engine_ready"),
+        driver_ready.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+        super::engine_ready(),
         field("session_active"),
         field("cleanup_pending"),
         field("error"),

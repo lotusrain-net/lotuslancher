@@ -350,8 +350,6 @@ pub fn hub_status() -> Value {
         "error_source": pick("error_source"),
         "error_phase": pick("error_phase"),
         "last_presence_at": pick("last_presence_at"),
-        "driver_ready": pick("driver_ready"),
-        "engine_ready": engine_ready(),
         "session_active": pick("session_active"),
         "cleanup_pending": pick("cleanup_pending"),
         "cleanup_phase": pick("cleanup_phase"),
