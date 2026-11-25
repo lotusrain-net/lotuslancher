@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import "./shell.css";
 import { agentNeedsAttention, invoke, useSnapshot } from "./bridge";
 import { Page } from "./Pages";
+import { EngineUpdateBanner } from "./EngineUpdateBanner";
 import { Settings } from "./Settings";
 import { TitleBar } from "./TitleBar";
 
@@ -15,7 +16,14 @@ const closeDrawer = () => void invoke("shell_set_drawer", { open: false });
 
 function MainView() {
   const { snap, progress, refresh } = useSnapshot();
-  if (snap?.screen === "daily") return <TitleBar drawer={snap.drawer} attention={agentNeedsAttention(snap)} maximized={snap.maximized} />;
+  if (snap?.screen === "daily") {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <TitleBar drawer={snap.drawer} attention={agentNeedsAttention(snap)} maximized={snap.maximized} />
+        <EngineUpdateBanner snap={snap} />
+      </div>
+    );
+  }
   return <Page snap={snap ?? ({ screen: "starting" } as never)} progress={progress} refresh={refresh} />;
 }
 

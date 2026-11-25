@@ -368,10 +368,12 @@ const RULES: &[(&str, Need)] = &[
     ("profile_sync_take", Off),
     ("mcp_download", Machine),
     ("runtime::runtime_status", Machine),
+    ("runtime::runtime_local_status", Machine),
     ("runtime::runtime_install", Machine),
     ("runtime::launcher_update_check", Machine),
     // The LotusProxy shell: the hub's desktop bridge and the local views.
     ("shell::desktop_status", Machine),
+    ("shell::desktop_engine_update_status", Machine),
     ("shell::desktop_device_context", Machine),
     ("shell::desktop_sign_challenge", Machine),
     ("shell::desktop_claim_grant", Machine),

@@ -87,6 +87,12 @@ pub fn desktop_status(webview: Webview) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn desktop_engine_update_status(webview: Webview) -> Result<Value, String> {
+    local_only(&webview)?;
+    Ok(super::engine_update_snapshot())
+}
+
+#[tauri::command]
 pub async fn desktop_device_context(webview: Webview, user_id: String) -> Result<Value, String> {
     hub_only(&webview)?;
     let uid = self::user_id(&user_id)?;

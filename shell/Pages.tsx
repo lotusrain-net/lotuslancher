@@ -21,12 +21,15 @@ function spec(s: Snapshot, openSettings: () => void, downloadProgress: Progress)
     case "init": {
       const failed = !!s.engine_error;
       const installing = s.engine_installing;
+      const oldEngine = s.engine_installed_version?.replace(/^(Chrome|Chromium)\//, "").split(".")[0];
+      const newEngine = s.engine_required_version?.replace(/^(Chrome|Chromium)\//, "").split(".")[0];
+      const updating = !!oldEngine && !!newEngine && oldEngine !== newEngine;
       const downloadStatus = downloadProgress?.route
-        ? `正在通过${downloadProgress.route === "system_proxy" ? "系统代理" : "直连网络"}下载浏览器组件（第 ${downloadProgress.attempt ?? 1}/${downloadProgress.max_attempts ?? 5} 次）…`
+        ? `正在通过${downloadProgress.route === "system_proxy" ? "系统代理" : "直连网络"}下载${updating ? `浏览器引擎更新（${oldEngine} → ${newEngine}）` : "浏览器组件"}（第 ${downloadProgress.attempt ?? 1}/${downloadProgress.max_attempts ?? 5} 次）…`
         : "下载完成后会自动进入，不需要任何操作。";
       return {
         spinner: installing,
-        title: "首次使用，正在准备浏览器组件",
+        title: updating ? "正在更新浏览器引擎" : "首次使用，正在准备浏览器组件",
         text: failed ? "组件下载失败，请检查网络后重试。" : installing ? downloadStatus : "组件已就绪，正在进入…",
         progress: installing,
         actions: failed ? [{ label: "换个线路重试", run: () => void act("driver_retry", s) }, settings] : [settings],

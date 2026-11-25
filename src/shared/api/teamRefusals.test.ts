@@ -14,7 +14,7 @@ const rust = (path: string) => read(join("src-tauri/src", path));
 
 /** A `pub const NAME: &str = "…";` of a Rust source. */
 function rustConst(src: string, name: string): string {
-  const m = new RegExp(`pub const ${name}: &str = "([^"]*)";`).exec(src);
+  const m = new RegExp(`pub const ${name}: &str =\\s*"([^"]*)";`).exec(src);
   assert.ok(m, `${name} not found`);
   return m[1];
 }
@@ -28,7 +28,7 @@ test("the plain refusals are the backend's constants", () => {
 
 test("the worded refusals follow the backend's formats, and read back", () => {
   const error = rust("space/error.rs");
-  assert.ok(error.includes(`"not allowed in this team: needs {} on the {}", n.right.replace('_', " "), n.on`), "Forbidden's format moved");
+  assert.ok(error.replace(/\s+/g, " ").includes(`"not allowed in this team: needs {} on the {}", n.right.replace('_', " "), n.on`), "Forbidden's format moved");
   assert.ok(error.includes(`"this profile is open on {device}: close it there first"`), "Leased's format moved");
   assert.ok(rust("space/doors.rs").includes(`format!("no profile {id} in this team")`), "Missing's format moved");
   assert.ok(rust("space/items.rs").includes(`"this extension is {} MB packed; a team keeps extensions up to {} MB"`), "the size refusal moved");

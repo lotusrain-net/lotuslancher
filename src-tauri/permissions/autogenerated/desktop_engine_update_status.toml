@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-engine-update-status"
+description = "Enables the desktop_engine_update_status command without any pre-configured scope."
+commands.allow = ["desktop_engine_update_status"]
+
+[[permission]]
+identifier = "deny-desktop-engine-update-status"
+description = "Denies the desktop_engine_update_status command without any pre-configured scope."
+commands.deny = ["desktop_engine_update_status"]

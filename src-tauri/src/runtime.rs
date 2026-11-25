@@ -20,16 +20,11 @@ pub(crate) use caps::loads_extensions_alone as engine_loads_extensions_alone;
 pub(crate) use os::free_bytes;
 
 const PUB_BASE: &str = "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev";
-/// Version manifest (GitHub raw) — one tiny GET yields every archive's current
-/// etag, so install/status checks never poll R2/S3 per-archive.
+/// Primary version manifest. R2 and the control plane are fallbacks so a
+/// GitHub outage cannot silently turn an unknown engine version into current.
 const MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/ProxyShard/ShardBrowser/main/runtime.json";
-/// Whole-request budget for that GET. The window's first paint waits on
-/// `runtime_status`, so being offline has to mean a quick "no manifest" instead
-/// of a request the OS lets hang — a network that accepts the connection and
-/// never answers, a captive portal, or dead DNS left the window empty (#114).
-/// Kept short on purpose: giving up early only costs this launch its update
-/// check, while waiting costs the operator a launcher that looks stuck.
+/// Whole-request budget for each source. The check runs in the background.
 const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 /// Keep a broken route from stalling first-run setup; reqwest applies this
 /// deadline to the response body as well as connecting and receiving headers.
@@ -459,6 +454,7 @@ pub struct RuntimeStatus {
     pub binary_path: Option<PathBuf>,
     pub installed_browser_etag: Option<String>,
     pub remote_browser_etag: Option<String>,
+    pub required_engine_version: Option<String>,
     pub update_available: bool,
     pub spec: Option<PlatformSpec>,
     /// True once the fingerprint library bundle has been extracted.
@@ -508,13 +504,30 @@ struct RemoteManifest {
     desktop_chromium_versions: Option<DesktopVersions>,
 }
 
-/// Fetch the version manifest (GitHub raw) — one request yielding every
-/// archive's current etag + the chromium version, so install/status never poll
-/// R2/S3 per-archive. Empty when unreachable, refusing, or out of budget — all
-/// three answer "no manifest", never an error, because `runtime_status` renders
-/// the interface behind this call.
+impl RemoteManifest {
+    fn available(&self) -> bool {
+        self.chromium_version.is_some() || !self.archives.is_empty()
+    }
+}
+
+/// Fetch the manifest from GitHub, the R2 mirror, then the authenticated
+/// control-plane proxy. Empty means every source failed.
 async fn fetch_manifest() -> RemoteManifest {
-    fetch_manifest_with_proxy(MANIFEST_URL, MANIFEST_TIMEOUT, true).await
+    let mirror_url = format!("{PUB_BASE}/runtime.json");
+    for url in [MANIFEST_URL, mirror_url.as_str()] {
+        let manifest = fetch_manifest_with_proxy(url, MANIFEST_TIMEOUT, true).await;
+        if manifest.available() {
+            return manifest;
+        }
+    }
+    if let Ok(value) =
+        crate::shell::agent::call("GET", "/desktop/engine-manifest", None, MANIFEST_TIMEOUT).await
+    {
+        if let Some(manifest) = parse_remote_manifest(value) {
+            return manifest;
+        }
+    }
+    RemoteManifest::default()
 }
 
 /// The fetch itself, address and budget passed in so a test can aim it at a
@@ -546,44 +559,49 @@ async fn fetch_manifest_with_proxy(
             return None;
         }
         let v: serde_json::Value = resp.json().await.ok()?;
-        let archives = v
-            .get("archives")
-            .and_then(|a| a.as_object())
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let str_field = |k: &str| v.get(k).and_then(|s| s.as_str()).map(String::from);
-        Some(RemoteManifest {
-            archives,
-            chromium_version: str_field("chromium_version"),
-            grease_brand: str_field("grease_brand"),
-            grease_version: str_field("grease_version"),
-            android_chromium_version: str_field("android_chromium_version"),
-            desktop_chromium_versions: v
-                .get("desktop_chromium_versions")
-                .and_then(|m| m.as_object())
-                .map(|o| {
-                    o.iter()
-                        .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect::<DesktopVersions>()
-                })
-                .filter(|m| !m.is_empty()),
-            tls: v.get("tls").filter(|t| t.is_object()).cloned(),
-            // Written as a number or a string; both mean the same thing.
-            engine_build: v.get("engine_build").and_then(|b| match b {
-                serde_json::Value::String(s) => Some(s.clone()),
-                serde_json::Value::Number(n) => Some(n.to_string()),
-                _ => None,
-            }),
-            min_launcher_version: str_field("min_launcher_version"),
-        })
+        parse_remote_manifest(v)
     }
     inner(url, budget, use_system_proxy)
         .await
         .unwrap_or_default()
+}
+
+fn parse_remote_manifest(v: serde_json::Value) -> Option<RemoteManifest> {
+    let archives = v
+        .get("archives")
+        .and_then(|a| a.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let str_field = |k: &str| v.get(k).and_then(|s| s.as_str()).map(String::from);
+    let manifest = RemoteManifest {
+        archives,
+        chromium_version: str_field("chromium_version"),
+        grease_brand: str_field("grease_brand"),
+        grease_version: str_field("grease_version"),
+        android_chromium_version: str_field("android_chromium_version"),
+        desktop_chromium_versions: v
+            .get("desktop_chromium_versions")
+            .and_then(|m| m.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect::<DesktopVersions>()
+            })
+            .filter(|m| !m.is_empty()),
+        tls: v.get("tls").filter(|t| t.is_object()).cloned(),
+        // Written as a number or a string; both mean the same thing.
+        engine_build: v.get("engine_build").and_then(|b| match b {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }),
+        min_launcher_version: str_field("min_launcher_version"),
+    };
+    manifest.available().then_some(manifest)
 }
 
 #[cfg(test)]
@@ -2324,7 +2342,6 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
     let remote = spec
         .as_ref()
         .and_then(|s| manifest.archives.get(&s.browser.key).cloned());
-    // Manifest unreachable → everything reads None and we assume up to date.
     let needs_newer_launcher = engine_needs_newer_launcher(&manifest);
 
     // An engine installed before build stamps has none recorded, and unknown is
@@ -2367,6 +2384,7 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
         binary_path: if installed { binary_path().ok() } else { None },
         installed_browser_etag: m.browser_etag,
         remote_browser_etag: remote,
+        required_engine_version: manifest.chromium_version,
         update_available,
         spec,
         fingerprints_installed,
@@ -2375,6 +2393,42 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
         launcher_version: launcher_version().to_string(),
         install_error,
         update_staged,
+    })
+}
+
+/// A manifest-free view used to paint the first screen. Update reconciliation
+/// runs separately in the shell background.
+#[tauri::command]
+pub fn runtime_local_status() -> Result<RuntimeStatus, String> {
+    let spec = host_spec();
+    let installed = binary_path().map(|path| path.exists()).unwrap_or(false);
+    let manifest = load_manifest();
+    let fingerprints_installed = manifest.fingerprints_etag.is_some()
+        && crate::store::fingerprints_dir()
+            .map(|dir| {
+                fs::read_dir(dir)
+                    .map(|entries| {
+                        entries.flatten().any(|entry| {
+                            entry.path().extension().and_then(|s| s.to_str()) == Some("json")
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+    Ok(RuntimeStatus {
+        installed,
+        binary_path: if installed { binary_path().ok() } else { None },
+        installed_browser_etag: manifest.browser_etag,
+        remote_browser_etag: None,
+        required_engine_version: None,
+        update_available: false,
+        spec,
+        fingerprints_installed,
+        needs_newer_launcher: false,
+        min_launcher_version: None,
+        launcher_version: launcher_version().to_string(),
+        install_error: load_install_error().filter(|_| !installed),
+        update_staged: false,
     })
 }
 

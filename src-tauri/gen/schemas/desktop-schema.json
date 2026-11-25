@@ -363,6 +363,12 @@
           "markdownDescription": "Enables the desktop_device_context command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_engine_update_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-engine-update-status",
+          "markdownDescription": "Enables the desktop_engine_update_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_hub_logout_ready command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-hub-logout-ready",
@@ -403,6 +409,12 @@
           "type": "string",
           "const": "allow-desktop-status",
           "markdownDescription": "Enables the desktop_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the runtime_local_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-runtime-local-status",
+          "markdownDescription": "Enables the runtime_local_status command without any pre-configured scope."
         },
         {
           "description": "Enables the shell_action command without any pre-configured scope.",
@@ -495,6 +507,12 @@
           "markdownDescription": "Denies the desktop_device_context command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_engine_update_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-engine-update-status",
+          "markdownDescription": "Denies the desktop_engine_update_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_hub_logout_ready command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-hub-logout-ready",
@@ -535,6 +553,12 @@
           "type": "string",
           "const": "deny-desktop-status",
           "markdownDescription": "Denies the desktop_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the runtime_local_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-runtime-local-status",
+          "markdownDescription": "Denies the runtime_local_status command without any pre-configured scope."
         },
         {
           "description": "Denies the shell_action command without any pre-configured scope.",

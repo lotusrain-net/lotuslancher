@@ -20,6 +20,16 @@ pub struct ShellState {
     /// The one-time "still running in the tray" notice was shown.
     #[serde(default)]
     pub tray_hint_shown: bool,
+    /// Unix milliseconds when the background engine check last reached a
+    /// terminal result. Older state files have no check timestamp.
+    #[serde(default)]
+    pub last_engine_check_ms: u64,
+    /// Consecutive checks without a reachable manifest or archive.
+    #[serde(default)]
+    pub engine_update_failures: u32,
+    /// Space and verification failures wait for an explicit user retry.
+    #[serde(default)]
+    pub engine_update_manual_hold: bool,
 }
 
 pub fn root() -> Result<PathBuf> {
@@ -109,6 +119,15 @@ pub fn wipe_hub_data() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_state_files_default_engine_update_fields() {
+        let state: ShellState = serde_json::from_str(r#"{"bound":true}"#).unwrap();
+        assert!(state.bound);
+        assert_eq!(state.last_engine_check_ms, 0);
+        assert_eq!(state.engine_update_failures, 0);
+        assert!(!state.engine_update_manual_hold);
+    }
 
     fn agent(authorization: &str) -> AgentAuth<'_> {
         AgentAuth {

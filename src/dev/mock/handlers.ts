@@ -388,6 +388,10 @@ export const handlers: Record<string, Handler> = {
       update_staged: update_available && engineIsStaged(),
     };
   },
+  runtime_local_status: (_a, ctx) => {
+    const status = handlers.runtime_status({}, ctx) as Record<string, unknown>;
+    return { ...status, remote_browser_etag: null, required_engine_version: null, update_available: false, install_error: engineInstalled() ? null : status.install_error };
+  },
   runtime_install: async (_a, ctx) => {
     const step = (phase: "download" | "extract", received: number, percent: number) =>
       ctx.emit("runtime:progress", { label: "ShardX-Mac-arm64.zip", phase, received, total: 2e7, percent });

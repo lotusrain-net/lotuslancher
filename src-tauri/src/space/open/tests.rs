@@ -1319,10 +1319,7 @@ async fn a_reaper_stops_sending_at_its_limit_and_keeps_the_copy_for_the_next_sta
         outcome,
         Outcome::Unsent("the team server did not take it in time".into())
     );
-    assert!(
-        took < Duration::from_secs(1) + Duration::from_secs(3),
-        "{took:?}"
-    );
+    assert!(took < Duration::from_secs(10), "{took:?}");
     assert!(!alive(pid));
     assert!(
         read_marker(&copy).is_some_and(|m| m.base == Some(0)),

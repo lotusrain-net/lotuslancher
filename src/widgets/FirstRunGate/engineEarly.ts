@@ -7,7 +7,7 @@ import type { RtStatus } from "../../shared/types";
 
 type StatusAnswer = { status: RtStatus } | { error: string };
 const askStatus = (): Promise<StatusAnswer> =>
-  invoke<RtStatus>("runtime_status").then((status) => ({ status }), (e: unknown) => ({ error: String(e) }));
+  invoke<RtStatus>("runtime_local_status").then((status) => ({ status }), (e: unknown) => ({ error: String(e) }));
 /** The engine check asked as the bundle loads (`askEngineEarly`), for the
  *  gate's first run to take. */
 let early: Promise<StatusAnswer> | null = null;

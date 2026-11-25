@@ -4,7 +4,9 @@
 // capabilities/default.json. Any command not listed here is unreachable from
 // every view. Kept in step with shell::commands (its test reads this file).
 const COMMANDS: &[&str] = &[
+    "runtime_local_status",
     "desktop_status",
+    "desktop_engine_update_status",
     "desktop_device_context",
     "desktop_sign_challenge",
     "desktop_claim_grant",

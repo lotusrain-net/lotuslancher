@@ -18,7 +18,7 @@ pub mod state;
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -28,6 +28,7 @@ pub use commands::*;
 
 pub const TITLE_H: f64 = 36.0;
 pub const DRAWER_W: f64 = 360.0;
+const ENGINE_BANNER_H: f64 = 52.0;
 /// How long a hub page may take to say it loaded before the offline screen.
 const HUB_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const HUB_OFFLINE_GRACE: Duration = Duration::from_secs(4);
@@ -63,6 +64,19 @@ enum AgentHealth {
     Offline,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum EngineUpdate {
+    Checking,
+    Current,
+    Downloading,
+    Updated,
+    BusyWaiting,
+    BlockedLauncher,
+    FailedNetwork,
+    FailedManual,
+}
+
 struct Shell {
     screen: Screen,
     drawer: bool,
@@ -75,6 +89,11 @@ struct Shell {
     status: Value,
     agent_health: AgentHealth,
     agent_failure_since: Option<Instant>,
+    engine_update: EngineUpdate,
+    engine_required_version: Option<String>,
+    engine_min_launcher_version: Option<String>,
+    engine_update_error: Option<Value>,
+    last_engine_hint_check: Option<Instant>,
     logout_requested: Option<Instant>,
     logout_seen: bool,
     hub_logout_ack: bool,
@@ -90,6 +109,11 @@ static SHELL: Mutex<Shell> = Mutex::new(Shell {
     status: Value::Null,
     agent_health: AgentHealth::Checking,
     agent_failure_since: None,
+    engine_update: EngineUpdate::Checking,
+    engine_required_version: None,
+    engine_min_launcher_version: None,
+    engine_update_error: None,
+    last_engine_hint_check: None,
     logout_requested: None,
     logout_seen: false,
     hub_logout_ack: false,
@@ -98,6 +122,9 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 static WIPING: AtomicBool = AtomicBool::new(false);
 static QUITTING: AtomicBool = AtomicBool::new(false);
 static QUIT_DONE: AtomicBool = AtomicBool::new(false);
+static CHECKING_ENGINE_UPDATE: AtomicBool = AtomicBool::new(false);
+static ENGINE_BUSY_RETRY_PENDING: AtomicBool = AtomicBool::new(false);
+static ENGINE_BUSY_RETRY_USED: AtomicBool = AtomicBool::new(false);
 
 fn with<T>(f: impl FnOnce(&mut Shell) -> T) -> T {
     let mut g = SHELL.lock().unwrap_or_else(|e| e.into_inner());
@@ -171,28 +198,39 @@ pub struct Layout {
 
 /// Where each view goes for a window of `w` x `h` logical pixels.
 pub fn layout(screen: Screen, drawer: bool, w: f64, h: f64) -> Layout {
+    layout_with_engine_banner(screen, drawer, w, h, false)
+}
+
+fn layout_with_engine_banner(
+    screen: Screen,
+    drawer: bool,
+    w: f64,
+    h: f64,
+    engine_banner: bool,
+) -> Layout {
     let body = (h - TITLE_H).max(0.0);
     match screen {
         Screen::Daily => {
+            let banner_h = if engine_banner { ENGINE_BANNER_H } else { 0.0 };
             let drawer_w = if drawer { DRAWER_W.min(w) } else { 0.0 };
             Layout {
                 main: Rect {
                     x: 0.0,
                     y: 0.0,
                     w,
-                    h: TITLE_H.min(h),
+                    h: (TITLE_H + banner_h).min(h),
                 },
                 drawer: drawer.then(|| Rect {
                     x: w - drawer_w,
-                    y: TITLE_H,
+                    y: TITLE_H + banner_h,
                     w: drawer_w,
-                    h: body,
+                    h: (body - banner_h).max(0.0),
                 }),
                 hub: Some(Rect {
                     x: 0.0,
-                    y: TITLE_H,
+                    y: TITLE_H + banner_h,
                     w: (w - drawer_w).max(0.0),
-                    h: body,
+                    h: (body - banner_h).max(0.0),
                 }),
             }
         }
@@ -221,11 +259,12 @@ pub fn relayout() {
     let Some(win) = app.get_window("main") else {
         return;
     };
-    let (screen, drawer) = with(|s| (s.screen, s.drawer));
+    let (screen, drawer, update) = with(|s| (s.screen, s.drawer, s.engine_update));
     let scale = win.scale_factor().unwrap_or(1.0);
     let Ok(size) = win.inner_size() else { return };
     let size = size.to_logical::<f64>(scale);
-    let l = layout(screen, drawer, size.width, size.height);
+    let banner = !matches!(update, EngineUpdate::Checking | EngineUpdate::Current);
+    let l = layout_with_engine_banner(screen, drawer, size.width, size.height, banner);
     if let Some(v) = app.get_webview("main") {
         place(&v, &l.main);
     }
@@ -307,13 +346,27 @@ pub fn set_drawer(open: bool) {
 
 /// The local views' picture: screen, drawer, the agent's status, versions.
 pub fn snapshot_value() -> Value {
-    let (screen, drawer, status, control, agent_health) = with(|s| {
+    let (
+        screen,
+        drawer,
+        status,
+        control,
+        agent_health,
+        engine_update,
+        engine_required_version,
+        engine_min_launcher_version,
+        engine_update_error,
+    ) = with(|s| {
         (
             s.screen,
             s.drawer,
             s.status.clone(),
             s.control.clone(),
             s.agent_health,
+            s.engine_update,
+            s.engine_required_version.clone(),
+            s.engine_min_launcher_version.clone(),
+            s.engine_update_error.clone(),
         )
     });
     let maximized = app()
@@ -329,9 +382,27 @@ pub fn snapshot_value() -> Value {
         "engine_ready": engine_ready(),
         "engine_installing": INSTALLING.load(SeqCst),
         "engine_error": ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        "engine_update": engine_update,
+        "engine_installed_version": crate::runtime::engine_version(),
+        "engine_required_version": engine_required_version,
+        "min_launcher_version": engine_min_launcher_version,
+        "engine_update_error": engine_update_error,
         "shell_version": env!("CARGO_PKG_VERSION"),
         "control_host": control.as_ref().and_then(|u| u.host_str().map(str::to_owned)),
         "autostart_available": autostart::AVAILABLE,
+    })
+}
+
+/// The remote hub can read update state without receiving local agent details.
+pub fn engine_update_snapshot() -> Value {
+    let snapshot = snapshot_value();
+    serde_json::json!({
+        "engine_update": snapshot.get("engine_update"),
+        "engine_installed_version": snapshot.get("engine_installed_version"),
+        "engine_required_version": snapshot.get("engine_required_version"),
+        "engine_update_error": snapshot.get("engine_update_error"),
+        "engine_installing": snapshot.get("engine_installing"),
+        "min_launcher_version": snapshot.get("min_launcher_version"),
     })
 }
 
@@ -357,6 +428,9 @@ pub fn hub_status() -> Value {
         "pending_logout": pick("pending_logout"),
         "logout_stage": pick("logout_stage"),
         "pending_grant": pick("pending_grant"),
+        "engine_update_hint": pick("engine_update_hint"),
+        "engine_update_blocked_launcher": pick("engine_update_blocked_launcher"),
+        "engine_required_version": pick("engine_required_version"),
         "error": s.get("error").and_then(Value::as_str).map(agent::sanitize_code).filter(|c| c != "operation_failed"),
     })
 }
@@ -372,7 +446,12 @@ pub fn install_engine() {
 
 /// Let the init page retry fingerprint downloads after the engine was already installed.
 pub fn retry_engine_install() {
-    install_engine_inner(true);
+    if engine_ready() {
+        let _ = state::update(|s| s.engine_update_manual_hold = false);
+        tauri::async_runtime::spawn(check_engine_update_inner(true, false, true));
+    } else {
+        install_engine_inner(true);
+    }
 }
 
 fn install_engine_inner(allow_installed_engine: bool) {
@@ -414,6 +493,255 @@ fn install_engine_inner(allow_installed_engine: bool) {
         }
         emit_local("shell://status", snapshot_value());
     });
+}
+
+/// Reconcile an installed engine with the published manifest without holding
+/// up the hub or existing sessions.
+pub async fn check_engine_update() {
+    check_engine_update_inner(false, false, false).await;
+}
+
+async fn check_engine_update_inner(bypass_cooldown: bool, busy_retry: bool, manual: bool) {
+    if CHECKING_ENGINE_UPDATE.swap(true, SeqCst) {
+        return;
+    }
+    if INSTALLING.load(SeqCst) || !engine_ready() {
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+
+    let persisted = state::load();
+    if persisted.engine_update_manual_hold && !manual {
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    if persisted.engine_update_failures >= 3
+        && !bypass_cooldown
+        && now_millis().saturating_sub(persisted.last_engine_check_ms) < ENGINE_CHECK_INTERVAL_MS
+    {
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    if !busy_retry {
+        ENGINE_BUSY_RETRY_PENDING.store(false, SeqCst);
+        ENGINE_BUSY_RETRY_USED.store(false, SeqCst);
+    }
+    set_engine_update_state(EngineUpdate::Checking, None, None, None);
+
+    let status = match crate::runtime::runtime_status().await {
+        Ok(status) => status,
+        Err(error) => {
+            finish_network_failure(None, error, manual);
+            CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+            return;
+        }
+    };
+    let required = status.required_engine_version.clone();
+    let min_launcher = status.min_launcher_version.clone();
+
+    if status.needs_newer_launcher {
+        record_engine_check(false, false);
+        publish_engine_launcher_blocked(true, required.as_deref()).await;
+        set_engine_update_state(EngineUpdate::BlockedLauncher, required, min_launcher, None);
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    publish_engine_launcher_blocked(false, None).await;
+    if status.spec.is_none() {
+        record_engine_check(false, false);
+        set_engine_update_state(EngineUpdate::Current, required, min_launcher, None);
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    if status.remote_browser_etag.is_none() {
+        finish_network_failure(required, "manifest_unavailable".into(), manual);
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    if !status.update_available {
+        record_engine_check(false, false);
+        set_engine_update_state(EngineUpdate::Current, required, min_launcher, None);
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+
+    let Some(window) = app().and_then(|a| a.get_window("main")) else {
+        finish_network_failure(required, "window_missing".into(), manual);
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    };
+    if INSTALLING.swap(true, SeqCst) {
+        CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+        return;
+    }
+    set_engine_update_state(
+        EngineUpdate::Downloading,
+        required.clone(),
+        min_launcher.clone(),
+        None,
+    );
+    let previous_etag = status.installed_browser_etag.clone();
+    let installed = crate::runtime::runtime_install(window, false).await;
+    INSTALLING.store(false, SeqCst);
+
+    match installed {
+        Ok(updated) => {
+            if let Some(error) = updated.install_error {
+                finish_install_failure(error, required, min_launcher, busy_retry);
+            } else {
+                record_engine_check(false, false);
+                let moved = previous_etag != updated.installed_browser_etag;
+                if moved {
+                    // Re-probe the driver so its next heartbeat reports the new engine.
+                    let _ = agent::call(
+                        "POST",
+                        "/desktop/action",
+                        Some(&serde_json::json!({ "name": "probe" })),
+                        Duration::from_secs(100),
+                    )
+                    .await;
+                    set_engine_update_state(
+                        EngineUpdate::Updated,
+                        updated.required_engine_version,
+                        updated.min_launcher_version,
+                        None,
+                    );
+                } else {
+                    set_engine_update_state(
+                        EngineUpdate::Current,
+                        updated.required_engine_version,
+                        updated.min_launcher_version,
+                        None,
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            let latest = crate::runtime::runtime_status().await.ok();
+            if let Some(install_error) = latest.as_ref().and_then(|s| s.install_error.clone()) {
+                finish_install_failure(install_error, required, min_launcher, busy_retry);
+            } else {
+                finish_network_failure(required, error, manual);
+            }
+        }
+    }
+    CHECKING_ENGINE_UPDATE.store(false, SeqCst);
+}
+
+const ENGINE_CHECK_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+fn record_engine_check(network_failure: bool, manual_hold: bool) {
+    let _ = state::update(|saved| {
+        saved.last_engine_check_ms = now_millis();
+        if network_failure {
+            saved.engine_update_failures = saved.engine_update_failures.saturating_add(1);
+        } else {
+            saved.engine_update_failures = 0;
+        }
+        saved.engine_update_manual_hold = manual_hold;
+    });
+}
+
+fn set_engine_update_state(
+    update: EngineUpdate,
+    required: Option<String>,
+    min_launcher: Option<String>,
+    error: Option<Value>,
+) {
+    with(|shell| {
+        shell.engine_update = update;
+        shell.engine_required_version = required;
+        shell.engine_min_launcher_version = min_launcher;
+        shell.engine_update_error = error;
+    });
+    if matches!(
+        update,
+        EngineUpdate::FailedNetwork | EngineUpdate::FailedManual
+    ) {
+        *ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some("engine_install_failed".into());
+    } else {
+        *ENGINE_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    relayout();
+}
+
+fn finish_network_failure(required: Option<String>, message: String, _manual: bool) {
+    record_engine_check(true, false);
+    set_engine_update_state(
+        EngineUpdate::FailedNetwork,
+        required,
+        None,
+        Some(serde_json::json!({ "stage": "download", "message": message })),
+    );
+}
+
+fn finish_install_failure(
+    error: crate::runtime::InstallError,
+    required: Option<String>,
+    min_launcher: Option<String>,
+    busy_retry: bool,
+) {
+    match error.stage.as_str() {
+        "busy" => {
+            record_engine_check(false, false);
+            if !busy_retry {
+                ENGINE_BUSY_RETRY_USED.store(false, SeqCst);
+                ENGINE_BUSY_RETRY_PENDING.store(true, SeqCst);
+            }
+            set_engine_update_state(
+                EngineUpdate::BusyWaiting,
+                required,
+                min_launcher,
+                serde_json::to_value(error).ok(),
+            );
+        }
+        "download" => {
+            record_engine_check(true, false);
+            set_engine_update_state(
+                EngineUpdate::FailedNetwork,
+                required,
+                min_launcher,
+                serde_json::to_value(error).ok(),
+            );
+        }
+        stage => {
+            let manual_hold = matches!(stage, "space" | "verify");
+            record_engine_check(false, manual_hold);
+            set_engine_update_state(
+                EngineUpdate::FailedManual,
+                required,
+                min_launcher,
+                serde_json::to_value(error).ok(),
+            );
+        }
+    }
+}
+
+fn should_check_engine_from_tray() -> bool {
+    let saved = state::load();
+    !saved.engine_update_manual_hold
+        && (saved.last_engine_check_ms == 0
+            || now_millis().saturating_sub(saved.last_engine_check_ms) >= ENGINE_CHECK_INTERVAL_MS)
+}
+
+async fn publish_engine_launcher_blocked(blocked: bool, required: Option<&str>) {
+    let _ = agent::call(
+        "POST",
+        "/desktop/engine-update-state",
+        Some(&serde_json::json!({
+            "blocked_launcher": blocked,
+            "required_engine_version": required.unwrap_or_default(),
+        })),
+        Duration::from_secs(3),
+    )
+    .await;
 }
 
 pub fn engine_ready() -> bool {
@@ -502,6 +830,7 @@ async fn boot() {
     let Some(control) = control else {
         eprintln!("[lotus] no usable control URL");
         set_screen(Screen::Offline);
+        tauri::async_runtime::spawn(check_engine_update());
         return;
     };
     with(|s| {
@@ -525,6 +854,9 @@ async fn boot() {
         set_screen(Screen::Init);
         install_engine();
     }
+    // Engine present: reconcile against the published manifest in the
+    // background. The hub continues on the current engine until the swap.
+    tauri::async_runtime::spawn(check_engine_update());
 }
 
 /// Wipe the hub's data folder if the persisted state says a logout did not
@@ -767,6 +1099,7 @@ async fn on_status(s: Value) {
         emit_local("shell://status", snapshot_value());
         let _ = update_tray();
     }
+    schedule_engine_update_for_status(&s);
     if status_str(&s, "authorization") == "authorized" && !state::load().bound {
         let _ = state::update(|st| st.bound = true);
     }
@@ -806,6 +1139,46 @@ async fn on_status(s: Value) {
     if ack || since.elapsed() >= LOGOUT_ACK_WAIT || !with(|sh| sh.hub_ready) {
         finish_logout_wipe().await;
     }
+}
+
+fn schedule_engine_update_for_status(status: &Value) {
+    let session_active = status_bool(status, "session_active");
+    let retry_busy = !session_active
+        && ENGINE_BUSY_RETRY_PENDING.swap(false, SeqCst)
+        && !ENGINE_BUSY_RETRY_USED.swap(true, SeqCst);
+    if retry_busy {
+        tauri::async_runtime::spawn(check_engine_update_inner(true, true, false));
+        return;
+    }
+
+    let hint = status_str(status, "engine_update_hint");
+    if hint.is_empty()
+        || comparable_engine_version(&hint)
+            == comparable_engine_version(&crate::runtime::engine_version().unwrap_or_default())
+    {
+        return;
+    }
+    let should_check = with(|shell| {
+        let ready = shell
+            .last_engine_hint_check
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(5 * 60));
+        if ready {
+            shell.last_engine_hint_check = Some(Instant::now());
+            shell.engine_required_version = Some(hint.to_owned());
+        }
+        ready
+    });
+    if should_check {
+        tauri::async_runtime::spawn(check_engine_update_inner(true, false, false));
+    }
+}
+
+fn comparable_engine_version(value: &str) -> &str {
+    value
+        .trim()
+        .strip_prefix("Chrome/")
+        .or_else(|| value.trim().strip_prefix("Chromium/"))
+        .unwrap_or_else(|| value.trim())
 }
 
 fn agent_health_after_failure(elapsed: Duration) -> AgentHealth {
@@ -911,6 +1284,13 @@ pub fn show_window() {
     }
 }
 
+fn show_window_from_tray() {
+    show_window();
+    if should_check_engine_from_tray() {
+        tauri::async_runtime::spawn(check_engine_update());
+    }
+}
+
 pub fn open_settings() {
     show_window();
     let screen = with(|s| s.screen);
@@ -941,7 +1321,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         b = b.icon(icon);
     }
     b.on_menu_event(|_, e| match e.id.as_ref() {
-        "tray_show" => show_window(),
+        "tray_show" => show_window_from_tray(),
         "tray_stop" => {
             tauri::async_runtime::spawn(async {
                 let _ = agent::call("POST", "/desktop/stop", None, Duration::from_secs(100)).await;
@@ -958,7 +1338,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             ..
         } = e
         {
-            show_window();
+            show_window_from_tray();
         }
     })
     .build(app)?;
@@ -1044,6 +1424,14 @@ mod tests {
             })
         );
         assert_eq!(l.drawer, None);
+    }
+
+    #[test]
+    fn daily_engine_banner_reserves_space_above_the_hub() {
+        let l = layout_with_engine_banner(Screen::Daily, false, 1280.0, 800.0, true);
+        assert_eq!(l.main.h, TITLE_H + ENGINE_BANNER_H);
+        assert_eq!(l.hub.as_ref().unwrap().y, TITLE_H + ENGINE_BANNER_H);
+        assert_eq!(l.hub.as_ref().unwrap().h, 800.0 - TITLE_H - ENGINE_BANNER_H);
     }
 
     #[test]

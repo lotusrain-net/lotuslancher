@@ -8,6 +8,8 @@
   ],
   "permissions": [
     "core:default",
+    "allow-runtime-local-status",
+    "allow-desktop-engine-update-status",
     "allow-shell-snapshot",
     "allow-shell-set-drawer",
     "allow-shell-reconnect",

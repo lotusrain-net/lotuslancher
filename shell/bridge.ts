@@ -20,6 +20,9 @@ export type Status = {
   error_phase?: string;
   driver_ready?: boolean;
   session_active?: boolean;
+  engine_update_hint?: string;
+  engine_update_blocked_launcher?: boolean;
+  engine_required_version?: string;
   cleanup_pending?: boolean;
   cleanup_phase?: string;
   cleanup_state?: "none" | "active" | "closing" | "awaiting_server" | "isolated" | "complete" | "unknown";
@@ -34,6 +37,11 @@ export type Snapshot = {
   engine_ready: boolean;
   engine_installing: boolean;
   engine_error: string | null;
+  engine_update: "checking" | "current" | "downloading" | "updated" | "busy_waiting" | "blocked_launcher" | "failed_network" | "failed_manual";
+  engine_installed_version: string | null;
+  engine_required_version: string | null;
+  min_launcher_version: string | null;
+  engine_update_error: { stage?: string; message?: string; running_browsers?: number; starting?: number } | null;
   shell_version: string;
   autostart_available: boolean;
 };
@@ -66,6 +74,11 @@ function devMock<T>(cmd: string): Promise<T> {
     engine_ready: true,
     engine_installing: q.get("screen") === "init",
     engine_error: null,
+    engine_update: "current",
+    engine_installed_version: "158.0.8127.36",
+    engine_required_version: null,
+    min_launcher_version: null,
+    engine_update_error: null,
     shell_version: "1.2.11",
     autostart_available: true,
   };

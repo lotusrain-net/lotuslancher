@@ -10,7 +10,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const rust = (path: string) => readFileSync(join(ROOT, "src-tauri/src", path), "utf8");
 
 function rustConst(src: string, name: string): string {
-  const m = new RegExp(`pub const ${name}: &str = "([^"]*)";`).exec(src);
+  const m = new RegExp(`pub const ${name}: &str =\\s*"([^"]*)";`).exec(src);
   assert.ok(m, `${name} not found`);
   return m[1];
 }

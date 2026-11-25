@@ -78,6 +78,7 @@ export type RtStatus = {
   binary_path: string | null;
   installed_browser_etag: string | null;
   remote_browser_etag: string | null;
+  required_engine_version: string | null;
   update_available: boolean;
   spec: RtSpec | null;
   fingerprints_installed: boolean;
