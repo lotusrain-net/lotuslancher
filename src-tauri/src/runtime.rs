@@ -2303,11 +2303,99 @@ mod first_run_download_tests {
 /// Whether the published engine differs from the one on disk: Chromium version,
 /// `engine_build`, or the archive hash. Any one of them is enough, and an
 /// unknown local value is not a mismatch.
+fn engine_version_components(value: &str) -> Option<Vec<u64>> {
+    let value = value.trim();
+    let version = if value
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Chrome/"))
+    {
+        &value[7..]
+    } else if value
+        .get(..9)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Chromium/"))
+    {
+        &value[9..]
+    } else {
+        value
+    };
+    let components: Option<Vec<_>> = version.split('.').map(|part| part.parse().ok()).collect();
+    components.filter(|parts| !parts.is_empty())
+}
+
+pub(crate) fn engine_version_satisfies(installed: &str, required: &str) -> Option<bool> {
+    let installed = engine_version_components(installed)?;
+    let required = engine_version_components(required)?;
+    let len = installed.len().max(required.len());
+    for i in 0..len {
+        match installed
+            .get(i)
+            .copied()
+            .unwrap_or(0)
+            .cmp(&required.get(i).copied().unwrap_or(0))
+        {
+            std::cmp::Ordering::Less => return Some(false),
+            std::cmp::Ordering::Greater => return Some(true),
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    Some(true)
+}
+
+#[cfg(test)]
+mod engine_version_tests {
+    use super::{engine_outdated, engine_version_satisfies, Manifest, RemoteManifest};
+    use std::collections::HashMap;
+
+    #[test]
+    fn engine_requirement_accepts_equal_or_newer_versions() {
+        assert_eq!(
+            engine_version_satisfies("Chrome/158.0.1", "157.9.9"),
+            Some(true)
+        );
+        assert_eq!(engine_version_satisfies("158.0.1", "158.0.1"), Some(true));
+        assert_eq!(engine_version_satisfies("157.9.9", "158.0.1"), Some(false));
+        assert_eq!(engine_version_satisfies("158.0", "158.0.0"), Some(true));
+    }
+
+    #[test]
+    fn unparseable_engine_versions_remain_unknown() {
+        assert_eq!(engine_version_satisfies("", "158.0.1"), None);
+        assert_eq!(engine_version_satisfies("Chrome/latest", "158.0.1"), None);
+    }
+
+    #[test]
+    fn a_newer_installed_engine_is_not_replaced_by_an_older_manifest() {
+        let local = Manifest {
+            installed_chromium_version: Some("Chrome/159.0.1".into()),
+            browser_etag: Some("old-archive".into()),
+            ..Manifest::default()
+        };
+        let remote = RemoteManifest {
+            chromium_version: Some("Chromium/158.0.1".into()),
+            archives: HashMap::from([("browser.zip".into(), "new-archive".into())]),
+            ..RemoteManifest::default()
+        };
+        assert!(!engine_outdated(&local, &remote, "browser.zip"));
+    }
+}
+
 fn engine_outdated(local: &Manifest, remote: &RemoteManifest, browser_key: &str) -> bool {
-    let version_moved = remote
-        .chromium_version
+    let installed_version = effective_installed_version(local);
+    let required_version = remote.chromium_version.as_deref();
+    if installed_version
         .as_deref()
-        .is_some_and(|rv| effective_installed_version(local).as_deref() != Some(rv));
+        .zip(required_version)
+        .is_some_and(|(installed, required)| {
+            engine_version_satisfies(required, installed) == Some(false)
+        })
+    {
+        return false;
+    }
+    let version_moved = required_version.is_some_and(|required| {
+        installed_version
+            .as_deref()
+            .is_some_and(|installed| engine_version_satisfies(installed, required) == Some(false))
+    });
     let differs = |have: Option<String>, want: Option<&str>| match (have, want) {
         (Some(h), Some(w)) => !h.is_empty() && h != w,
         _ => false,

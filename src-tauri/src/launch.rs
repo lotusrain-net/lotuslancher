@@ -228,6 +228,17 @@ fn fill_window_from_screen(
 /// This computer's monitor: width and height in CSS px, and its pixel ratio.
 pub type HostScreen = (i64, i64, f64);
 
+fn json_number(value: f64) -> Option<serde_json::Number> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value.fract() == 0.0 && value >= i64::MIN as f64 && value < 9_223_372_036_854_775_808.0 {
+        Some(serde_json::Number::from(value as i64))
+    } else {
+        serde_json::Number::from_f64(value)
+    }
+}
+
 /// Whether the global "Real screen" mode applies: never to a hand-picked
 /// resolution, and never to a phone, which keeps the handset's screen.
 fn wants_real_screen(
@@ -290,7 +301,9 @@ pub fn claim_host_screen(
     // The size is in CSS px at this monitor's scale: the template's ratio with it
     // would make a panel no machine has (1536x864 at 1, for a 1920x1080 at 125%).
     if dpr > 0.0 {
-        scr.insert("device_pixel_ratio".into(), dpr.into());
+        if let Some(dpr) = json_number(dpr) {
+            scr.insert("device_pixel_ratio".into(), dpr.into());
+        }
     }
     // The template's window was cut for its own screen: the size goes, and the
     // launch's rule derives one that fits this one (other window keys stay).
@@ -1902,6 +1915,16 @@ mod tests {
     }
 
     #[test]
+    fn integral_device_pixel_ratios_serialize_as_integers() {
+        for (ratio, expected) in [(1.0, "1"), (2.0, "2"), (1.25, "1.25")] {
+            let value = super::json_number(ratio).unwrap();
+            assert_eq!(value.to_string(), expected);
+        }
+        assert!(super::json_number(f64::NAN).is_none());
+        assert!(super::json_number(f64::INFINITY).is_none());
+    }
+
+    #[test]
     fn a_windows_template_takes_the_host_screen_and_keeps_its_taskbar() {
         let mut raw = template("Windows", WIN_UA);
         assert!(claim_host_screen(&mut raw, Some((2560, 1440, 1.5))));
@@ -1937,6 +1960,7 @@ mod tests {
         assert!(claim_host_screen(&mut raw, Some((1440, 900, 2.0))));
         assert_eq!(raw["screen"]["width"], 1440);
         assert_eq!(raw["screen"]["device_pixel_ratio"].as_f64(), Some(2.0));
+        assert_eq!(raw["screen"]["device_pixel_ratio"].to_string(), "2");
         assert_eq!(raw["screen"]["avail_height"], 852);
         assert_eq!(raw["window"]["outer_width"], 1440);
         assert_window_fits(&raw);

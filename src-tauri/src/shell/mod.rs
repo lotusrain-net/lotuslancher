@@ -1153,8 +1153,10 @@ fn schedule_engine_update_for_status(status: &Value) {
 
     let hint = status_str(status, "engine_update_hint");
     if hint.is_empty()
-        || comparable_engine_version(&hint)
-            == comparable_engine_version(&crate::runtime::engine_version().unwrap_or_default())
+        || crate::runtime::engine_version()
+            .as_deref()
+            .and_then(|installed| crate::runtime::engine_version_satisfies(installed, &hint))
+            == Some(true)
     {
         return;
     }
@@ -1171,14 +1173,6 @@ fn schedule_engine_update_for_status(status: &Value) {
     if should_check {
         tauri::async_runtime::spawn(check_engine_update_inner(true, false, false));
     }
-}
-
-fn comparable_engine_version(value: &str) -> &str {
-    value
-        .trim()
-        .strip_prefix("Chrome/")
-        .or_else(|| value.trim().strip_prefix("Chromium/"))
-        .unwrap_or_else(|| value.trim())
 }
 
 fn agent_health_after_failure(elapsed: Duration) -> AgentHealth {
