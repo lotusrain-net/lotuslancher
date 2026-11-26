@@ -1,7 +1,7 @@
 {
   "name": "shardx-launcher",
   "private": true,
-  "version": "1.2.14",
+  "version": "2.1.15",
   "type": "module",
   "scripts": {
     "dev": "vite",
