@@ -33,8 +33,8 @@ const ENGINE_BANNER_H: f64 = 52.0;
 const HUB_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const HUB_OFFLINE_GRACE: Duration = Duration::from_secs(4);
 const AGENT_STATUS_GRACE: Duration = Duration::from_secs(15);
-/// Past the agent's own 3 min quit budget, the shell goes regardless.
-const QUIT_HARD_CAP: Duration = Duration::from_secs(195);
+/// Covers the agent's 3 min cleanup budget plus its UI close and worker drain.
+const QUIT_HARD_CAP: Duration = Duration::from_secs(210);
 /// How long the hub gets to end its IAM session before the wipe goes ahead.
 const LOGOUT_ACK_WAIT: Duration = Duration::from_secs(5);
 const CONTROL_OVERRIDE: Option<&str> = option_env!("LOTUS_CONTROL_URL");
