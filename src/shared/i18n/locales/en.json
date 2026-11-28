@@ -3563,5 +3563,10 @@
   "proxyPeek.changeIp": "Change IP",
   "proxyPeek.ipChanged": "New IP: {ip}",
   "proxyPeek.ipNotChanged": "The provider took the request, but the IP has not changed yet",
-  "proxyPeek.changeIpFailed": "Couldn’t change the IP"
+  "proxyPeek.changeIpFailed": "Couldn’t change the IP",
+  "settings.controlServerTitle": "Control server",
+  "settings.controlServerLabel": "Server address",
+  "settings.controlServerHelp": "Management service origin. Use HTTPS for remote services, or http://127.0.0.1:port for a local container test.",
+  "settings.controlServerInvalid": "Enter an HTTPS origin or a loopback HTTP origin.",
+  "settings.controlServerRestart": "Restart the desktop app and embedded agent after saving to switch servers."
 }

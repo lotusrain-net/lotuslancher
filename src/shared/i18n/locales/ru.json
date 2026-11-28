@@ -3563,5 +3563,10 @@
   "proxyPeek.changeIp": "Сменить IP",
   "proxyPeek.ipChanged": "Новый IP: {ip}",
   "proxyPeek.ipNotChanged": "Провайдер принял запрос, но IP пока не сменился",
-  "proxyPeek.changeIpFailed": "Не удалось сменить IP"
+  "proxyPeek.changeIpFailed": "Не удалось сменить IP",
+  "settings.controlServerTitle": "Сервер управления",
+  "settings.controlServerLabel": "Адрес сервера",
+  "settings.controlServerHelp": "Адрес сервиса управления. Для удалённого сервиса используйте HTTPS, для локального Docker-теста — http://127.0.0.1:порт.",
+  "settings.controlServerInvalid": "Укажите HTTPS-адрес или локальный HTTP-адрес loopback.",
+  "settings.controlServerRestart": "После сохранения перезапустите приложение и встроенный агент."
 }

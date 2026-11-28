@@ -2450,6 +2450,7 @@ fn settings_save(mut value: settings::Settings) -> Result<(), String> {
     // root among them, which is where every profile lives. The banner says
     // the file was not read; until it is fixed or moved aside, nothing here
     // gets written.
+    settings::validate_control_url(value.control_url.as_deref())?;
     if let Some(err) = settings::load_error() {
         return Err(format!(
             "Settings were not saved: the file could not be read, so what is on \

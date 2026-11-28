@@ -3563,5 +3563,10 @@
   "proxyPeek.changeIp": "更换 IP",
   "proxyPeek.ipChanged": "新 IP：{ip}",
   "proxyPeek.ipNotChanged": "服务商已接受请求，但 IP 尚未变化",
-  "proxyPeek.changeIpFailed": "无法更换 IP"
+  "proxyPeek.changeIpFailed": "无法更换 IP",
+  "settings.controlServerTitle": "服务端连接",
+  "settings.controlServerLabel": "服务端地址",
+  "settings.controlServerHelp": "用于连接管理服务。HTTPS 地址可用于远程服务，本机 Docker 测试可使用 http://127.0.0.1:端口。",
+  "settings.controlServerInvalid": "请输入 HTTPS 地址，或本机回环 HTTP 地址。",
+  "settings.controlServerRestart": "保存后重启桌面端和内嵌代理以切换服务端。"
 }

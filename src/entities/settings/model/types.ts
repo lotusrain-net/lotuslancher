@@ -1,4 +1,6 @@
 export type Settings = {
+  /** Control-plane origin used by the embedded agent after restart. */
+  control_url?: string | null;
   browser_path: string | null;
   theme: string;
   geo_checker?: string | null;

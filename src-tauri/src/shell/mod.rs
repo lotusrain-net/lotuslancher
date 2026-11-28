@@ -170,13 +170,24 @@ fn parse_control_with_local_http(raw: &str, allow_local_http: bool) -> Option<ur
 
 /// An explicit development target wins over the agent's configured endpoint.
 /// An invalid override fails closed instead of silently opening production.
-fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Option<url::Url> {
-    if let Some(raw) = override_url {
+fn resolve_control_with_setting(
+    build_override: Option<&str>,
+    settings_override: Option<&str>,
+    agent_url: Option<&str>,
+) -> Option<url::Url> {
+    if let Some(raw) = build_override {
         return parse_control_override(raw);
+    }
+    if let Some(raw) = settings_override.filter(|raw| !raw.trim().is_empty()) {
+        return parse_control_with_local_http(raw, true);
     }
     agent_url
         .and_then(parse_control)
         .or_else(|| parse_control(DEFAULT_CONTROL))
+}
+
+fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Option<url::Url> {
+    resolve_control_with_setting(override_url, None, agent_url)
 }
 
 // ---- layout ----
@@ -389,6 +400,7 @@ pub fn snapshot_value() -> Value {
         "engine_update_error": engine_update_error,
         "shell_version": env!("CARGO_PKG_VERSION"),
         "control_host": control.as_ref().and_then(|u| u.host_str().map(str::to_owned)),
+        "control_url": control.as_ref().map(|u| u.as_str()),
         "autostart_available": autostart::AVAILABLE,
     })
 }
@@ -826,7 +838,11 @@ async fn boot() {
     let agent_control = status
         .as_ref()
         .and_then(|s| s.get("control_url").and_then(Value::as_str));
-    let control = resolve_control(CONTROL_OVERRIDE, agent_control);
+    let saved_control = crate::settings::load()
+        .ok()
+        .and_then(|settings| settings.control_url);
+    let control =
+        resolve_control_with_setting(CONTROL_OVERRIDE, saved_control.as_deref(), agent_control);
     let Some(control) = control else {
         eprintln!("[lotus] no usable control URL");
         set_screen(Screen::Offline);
@@ -1513,6 +1529,26 @@ mod tests {
             Some("https://hub.lotusrain.net"),
         );
         assert_eq!(control.unwrap().as_str(), "http://localhost:3000/");
+    }
+
+    #[test]
+    fn a_saved_local_control_url_overrides_the_agent_endpoint() {
+        let control = resolve_control_with_setting(
+            None,
+            Some("http://127.0.0.1:8080"),
+            Some("https://hub.lotusrain.net"),
+        );
+        assert_eq!(control.unwrap().as_str(), "http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn invalid_saved_control_url_fails_closed() {
+        assert!(resolve_control_with_setting(
+            None,
+            Some("http://hub.lotusrain.net"),
+            Some("https://hub.lotusrain.net"),
+        )
+        .is_none());
     }
 
     #[test]

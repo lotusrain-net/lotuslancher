@@ -1,11 +1,19 @@
 use crate::store;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
+    /// Control-plane origin shared with the embedded agent. Empty uses its default.
+    #[serde(default)]
+    pub control_url: Option<String>,
+    /// Preserve fields written by the embedded agent that the launcher does not edit.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
     /// Absolute path to the ShardX executable.
     pub browser_path: Option<String>,
     /// Theme: "dark" (default) or "light".
@@ -101,6 +109,28 @@ fn default_api_port() -> u16 {
     40325
 }
 
+pub fn validate_control_url(raw: Option<&str>) -> Result<(), String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let parsed = url::Url::parse(raw).map_err(|_| "invalid_control_url".to_string())?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "invalid_control_url".to_string())?;
+    let loopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+    let valid_scheme = parsed.scheme() == "https" || parsed.scheme() == "http" && loopback;
+    if !valid_scheme
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("invalid_control_url".into());
+    }
+    Ok(())
+}
+
 /// Why the settings file could not be read, if it could not. The file is kept
 /// as it is until the user saves over it, so nothing is lost meanwhile.
 static LOAD_ERROR: Mutex<Option<String>> = Mutex::new(None);
@@ -108,6 +138,8 @@ static LOAD_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// The settings a fresh install starts with — the serde defaults, spelled out.
 fn defaults() -> Settings {
     Settings {
+        control_url: None,
+        extra: BTreeMap::new(),
         browser_path: None,
         theme: default_theme(),
         geo_checker: Some("ip-api.com".into()),
@@ -314,5 +346,50 @@ mod tests {
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, super::new_secret());
         assert!(a.len() >= crate::api::MIN_SECRET_LEN);
+    }
+}
+
+#[cfg(test)]
+mod control_url_tests {
+    use super::validate_control_url;
+
+    #[test]
+    fn accepts_remote_https_and_local_http_origins() {
+        for value in [
+            Some("https://control.example"),
+            Some("http://127.0.0.1:8080"),
+            Some("http://localhost:8080"),
+            Some("http://[::1]:8080"),
+            None,
+        ] {
+            assert!(validate_control_url(value).is_ok(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_insecure_remote_and_non_origin_urls() {
+        for value in [
+            Some("http://control.example"),
+            Some("http://192.168.1.20:8080"),
+            Some("https://user@control.example"),
+            Some("https://control.example/path"),
+            Some("https://control.example/?x=1"),
+        ] {
+            assert!(validate_control_url(value).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn preserves_embedded_agent_settings_during_shell_round_trip() {
+        let settings: super::Settings = serde_json::from_str(
+            r#"{"control_url":"https://test.example","name":"device","driver_url":"http://127.0.0.1:40325","pin_policy":"auto","api_secret":"secret"}"#,
+        )
+        .unwrap();
+        let saved = serde_json::to_value(settings).unwrap();
+        assert_eq!(saved["control_url"], "https://test.example");
+        assert_eq!(saved["name"], "device");
+        assert_eq!(saved["driver_url"], "http://127.0.0.1:40325");
+        assert_eq!(saved["pin_policy"], "auto");
+        assert_eq!(saved["api_secret"], "secret");
     }
 }

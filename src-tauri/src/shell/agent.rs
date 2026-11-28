@@ -57,8 +57,13 @@ pub fn spawn() -> Result<()> {
     let mut cmd = Command::new(&agent);
     cmd.arg("--embedded")
         .arg("--driver-path")
-        .arg(&me)
-        .stdin(Stdio::null())
+        .arg(&me);
+    if let Ok(settings) = crate::settings::load() {
+        if let Some(control) = settings.control_url.as_deref().filter(|value| !value.trim().is_empty()) {
+            cmd.arg("--control-url").arg(control.trim());
+        }
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if let Some(control) = super::CONTROL_OVERRIDE {

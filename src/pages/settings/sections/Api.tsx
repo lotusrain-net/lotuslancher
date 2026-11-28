@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Button, Switch } from "@proxyshard/shardx-ui-kit";
+import { Button, Input, Switch } from "@proxyshard/shardx-ui-kit";
 import { DownloadIcon } from "../../../shared/icons";
 import { DetailRow, DetailsCard } from "../../../shared/ui/DetailsCard";
 import { NumField } from "../../../shared/ui/NumField";
@@ -18,6 +18,19 @@ import { holdSave } from "../useSettingsDraft";
 // role and a copyable target; the click opens the system browser.
 const API_DOCS = "https://docs.shardx.com/eng/shardx-launcher-api/binding-and-lifecycle?fallback=true";
 const LOOPBACK = "127.0.0.1";
+const CONTROL_URL_DEFAULT = "https://hub.lotusrain.net";
+
+function validControlOrigin(raw: string): boolean {
+  try {
+    const url = new URL(raw.trim());
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]";
+    return (url.protocol === "https:" || url.protocol === "http:" && loopback)
+      && url.username === "" && url.password === "" && url.pathname === "/"
+      && url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
 
 export function ApiSection({ s, saved, setS, api, setApi, apiError, retryApi }: SettingsProps & {
   /** What is on disk: the restart note speaks of saved settings, not of the draft. */
@@ -33,6 +46,10 @@ export function ApiSection({ s, saved, setS, api, setApi, apiError, retryApi }: 
   // restart (O6; no Restart button without a relaunch command, ruling 7).
   const running = apiServerAtStart();
   const restartNeeded = !!running && ((saved.api_enabled ?? true) !== running.enabled || (saved.api_port ?? 40325) !== running.port);
+  const controlUrl = s.control_url?.trim() || CONTROL_URL_DEFAULT;
+  const badControlUrl = controlUrl !== "" && !validControlOrigin(controlUrl);
+  const savedControlUrl = saved.control_url?.trim() || CONTROL_URL_DEFAULT;
+  const controlRestartNeeded = controlUrl !== savedControlUrl;
   // Every script and MCP client on the old token stops working: ask first (WRITE-23).
   const regenToken = async () => {
     const yes = await confirmModal({
@@ -67,6 +84,34 @@ export function ApiSection({ s, saved, setS, api, setApi, apiError, retryApi }: 
 
   return (
     <div className="flex flex-col gap-[32px]">
+      <SettingsGroup title={t("settings.controlServerTitle")}>
+        <SettingRow
+          id="control-url"
+          title={t("settings.controlServerLabel")}
+          help={t("settings.controlServerHelp")}
+          control={({ labelId, helpId }) => (
+            <div className="w-[240px]">
+              <Input
+                aria-labelledby={labelId}
+                aria-describedby={helpId}
+                inputSize="xsmall"
+                className="mono"
+                spellCheck={false}
+                value={controlUrl}
+                placeholder={CONTROL_URL_DEFAULT}
+                error={badControlUrl ? t("settings.controlServerInvalid") : undefined}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  const trimmed = value.trim();
+                  setS({ ...s, control_url: trimmed === "" ? null : trimmed });
+                  holdSave("control_url", trimmed !== "" && !validControlOrigin(trimmed) ? t("settings.controlServerInvalid") : null);
+                }}
+              />
+            </div>
+          )}
+          below={controlRestartNeeded ? <p data-restart-note className="m-0 text-help text-warning-text">{t("settings.controlServerRestart")}</p> : undefined}
+        />
+      </SettingsGroup>
       <SettingsGroup title={t("settings.apiTitle")}>
         <SettingRow
           id="api"
