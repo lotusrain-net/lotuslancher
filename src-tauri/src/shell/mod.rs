@@ -38,6 +38,17 @@ const QUIT_HARD_CAP: Duration = Duration::from_secs(210);
 /// How long the hub gets to end its IAM session before the wipe goes ahead.
 const LOGOUT_ACK_WAIT: Duration = Duration::from_secs(5);
 const CONTROL_OVERRIDE: Option<&str> = option_env!("LOTUS_CONTROL_URL");
+const fn env_flag_enabled(value: Option<&str>) -> bool {
+    match value {
+        Some(raw) => matches!(
+            raw.as_bytes(),
+            [b'1'] | [b't', b'r', b'u', b'e'] | [b'T', b'R', b'U', b'E']
+        ),
+        None => false,
+    }
+}
+pub(crate) const ALLOW_CUSTOM_CONTROL_URL: bool =
+    cfg!(debug_assertions) || env_flag_enabled(option_env!("LOTUS_ALLOW_CUSTOM_CONTROL_URL"));
 const DEFAULT_CONTROL: &str = "https://hub.lotusrain.net";
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -156,12 +167,13 @@ fn parse_control_override(raw: &str) -> Option<url::Url> {
 }
 
 fn parse_control_with_local_http(raw: &str, allow_local_http: bool) -> Option<url::Url> {
-    let u = url::Url::parse(raw).ok()?;
+    let u = url::Url::parse(raw.trim()).ok()?;
     let host = u.host_str()?;
     let loopback = host == "127.0.0.1" || host == "localhost" || host == "[::1]";
     let ok = (u.scheme() == "https" || (u.scheme() == "http" && loopback && allow_local_http))
         && u.username().is_empty()
         && u.password().is_none()
+        && u.path() == "/"
         && u.query().is_none()
         && u.fragment().is_none();
     ok.then(|| url::Url::parse(&u.origin().ascii_serialization()).ok())
@@ -170,13 +182,28 @@ fn parse_control_with_local_http(raw: &str, allow_local_http: bool) -> Option<ur
 
 /// An explicit development target wins over the agent's configured endpoint.
 /// An invalid override fails closed instead of silently opening production.
-fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Option<url::Url> {
-    if let Some(raw) = override_url {
+fn resolve_control_with_setting(
+    build_override: Option<&str>,
+    settings_override: Option<&str>,
+    agent_url: Option<&str>,
+    allow_custom_setting: bool,
+) -> Option<url::Url> {
+    if let Some(raw) = build_override {
         return parse_control_override(raw);
+    }
+    if let Some(raw) = settings_override
+        .filter(|raw| !raw.trim().is_empty())
+        .filter(|_| allow_custom_setting)
+    {
+        return parse_control_with_local_http(raw, true);
     }
     agent_url
         .and_then(parse_control)
         .or_else(|| parse_control(DEFAULT_CONTROL))
+}
+
+fn resolve_control(override_url: Option<&str>, agent_url: Option<&str>) -> Option<url::Url> {
+    resolve_control_with_setting(override_url, None, agent_url, ALLOW_CUSTOM_CONTROL_URL)
 }
 
 // ---- layout ----
@@ -826,7 +853,15 @@ async fn boot() {
     let agent_control = status
         .as_ref()
         .and_then(|s| s.get("control_url").and_then(Value::as_str));
-    let control = resolve_control(CONTROL_OVERRIDE, agent_control);
+    let saved_control = crate::settings::load()
+        .ok()
+        .and_then(|settings| settings.control_url);
+    let control = resolve_control_with_setting(
+        CONTROL_OVERRIDE,
+        saved_control.as_deref(),
+        agent_control,
+        ALLOW_CUSTOM_CONTROL_URL,
+    );
     let Some(control) = control else {
         eprintln!("[lotus] no usable control URL");
         set_screen(Screen::Offline);
@@ -1490,7 +1525,7 @@ mod tests {
     #[test]
     fn only_an_https_origin_is_a_control_url() {
         assert_eq!(
-            parse_control("https://hub.lotusrain.net/x")
+            parse_control("https://hub.lotusrain.net/")
                 .unwrap()
                 .as_str(),
             "https://hub.lotusrain.net/"
@@ -1498,6 +1533,7 @@ mod tests {
         for bad in [
             "http://hub.lotusrain.net",
             "https://u:p@hub.lotusrain.net",
+            "https://hub.lotusrain.net/path",
             "https://hub.lotusrain.net/?a=1",
             "file:///etc",
             "javascript:alert(1)",
@@ -1509,10 +1545,54 @@ mod tests {
     #[test]
     fn explicit_local_control_override_wins_over_the_agent_endpoint() {
         let control = resolve_control(
-            Some("http://localhost:3000/path"),
+            Some("http://localhost:3000/"),
             Some("https://hub.lotusrain.net"),
         );
         assert_eq!(control.unwrap().as_str(), "http://localhost:3000/");
+    }
+
+    #[test]
+    fn a_permitted_saved_local_control_url_overrides_the_agent_endpoint() {
+        let control = resolve_control_with_setting(
+            None,
+            Some("http://127.0.0.1:8080/"),
+            Some("https://hub.lotusrain.net"),
+            true,
+        );
+        assert_eq!(control.unwrap().as_str(), "http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn an_invalid_permitted_saved_control_url_fails_closed() {
+        assert!(resolve_control_with_setting(
+            None,
+            Some("http://hub.lotusrain.net"),
+            Some("https://hub.lotusrain.net"),
+            true,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn custom_settings_are_ignored_when_not_enabled() {
+        assert_eq!(
+            resolve_control_with_setting(
+                None,
+                Some("https://settings.example/"),
+                Some("https://hub.lotusrain.net/"),
+                false,
+            )
+            .unwrap()
+            .as_str(),
+            "https://hub.lotusrain.net/"
+        );
+    }
+
+    #[test]
+    fn settings_paths_are_rejected_instead_of_stripped() {
+        for raw in ["https://hub.example/path", "http://localhost:8080/path"] {
+            assert!(parse_control_with_local_http(raw, true).is_none(), "{raw}");
+        }
     }
 
     #[test]
@@ -1525,9 +1605,30 @@ mod tests {
     }
 
     #[test]
+    fn an_invalid_build_override_does_not_fall_back_to_settings_or_agent() {
+        assert!(resolve_control_with_setting(
+            Some("http://remote.example"),
+            Some("https://settings.example"),
+            Some("https://hub.lotusrain.net"),
+            true,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn env_flag_only_enables_explicit_truthy_values() {
+        assert!(env_flag_enabled(Some("1")));
+        assert!(env_flag_enabled(Some("true")));
+        assert!(env_flag_enabled(Some("TRUE")));
+        for off in [None, Some(""), Some("0"), Some("false"), Some("yes")] {
+            assert!(!env_flag_enabled(off), "{off:?}");
+        }
+    }
+
+    #[test]
     fn absent_control_override_keeps_the_agent_endpoint() {
         assert_eq!(
-            resolve_control(None, Some("https://control.example.test/path"))
+            resolve_control(None, Some("https://control.example.test/"))
                 .unwrap()
                 .as_str(),
             "https://control.example.test/"

@@ -2458,13 +2458,16 @@ fn settings_save(mut value: settings::Settings) -> Result<(), String> {
              or delete it first. ({err})"
         ));
     }
-    // Owned by the migration, not the form — which round-trips the whole struct
-    // and would reset it while the data sits on another disk.
+    // Owned by the migration and shell settings, not the form — which
+    // round-trips the whole struct and would reset them.
     if let Ok(cur) = settings::load() {
         value.data_root = cur.data_root;
+        value.control_url = cur.control_url;
         if value.api_secret.is_empty() {
             value.api_secret = cur.api_secret;
         }
+    } else {
+        value.control_url = settings::normalize_control_url(value.control_url.as_deref())?;
     }
     settings::save(&value).map_err(|e| e.to_string())
 }
@@ -3264,6 +3267,7 @@ pub fn run() {
             shell::shell_action,
             shell::shell_cleanup,
             shell::shell_preferences,
+            shell::shell_set_control_url,
             shell::shell_set_autostart,
             shell::shell_set_system_proxy,
             shell::shell_summary,

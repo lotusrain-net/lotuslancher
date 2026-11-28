@@ -43,7 +43,7 @@ function DrawerView() {
   }, []);
   return (
     <div className="shell-drawer h-full overflow-y-auto border-l border-stroke-soft-200 bg-bg-page">
-      <Settings snap={snap} onClose={closeDrawer} refresh={refresh} />
+      <Settings snap={snap} onClose={closeDrawer} refresh={refresh} isOpen={open} />
     </div>
   );
 }

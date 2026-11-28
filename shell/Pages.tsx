@@ -134,7 +134,7 @@ export function Page({ snap, progress, refresh }: { snap: Snapshot; progress: Pr
             aria-hidden="true"
           />
           <aside className="shell-sheet fixed bottom-0 right-0 top-9 w-[360px] overflow-y-auto border-l border-stroke-soft-200 bg-bg-page shadow-[var(--shadow-lg)]" data-shown={shown || undefined}>
-            <Settings snap={snap} onClose={() => setSettingsOpen(false)} refresh={refresh} />
+            <Settings snap={snap} onClose={() => setSettingsOpen(false)} refresh={refresh} isOpen={settingsOpen} />
           </aside>
         </>
       )}

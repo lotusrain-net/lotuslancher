@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shell-set-control-url"
+description = "Enables the shell_set_control_url command without any pre-configured scope."
+commands.allow = ["shell_set_control_url"]
+
+[[permission]]
+identifier = "deny-shell-set-control-url"
+description = "Denies the shell_set_control_url command without any pre-configured scope."
+commands.deny = ["shell_set_control_url"]

@@ -296,11 +296,61 @@ pub async fn shell_preferences(webview: Webview) -> Result<Value, String> {
     let p = agent::call("GET", "/desktop/preferences", None, SHORT)
         .await
         .unwrap_or(Value::Null);
+    let settings = crate::settings::load().ok();
+    let control_url = effective_preferences_control_url(
+        super::CONTROL_OVERRIDE,
+        settings.as_ref().and_then(|s| s.control_url.as_deref()),
+    );
+    let settings_writable = settings.is_some() && crate::settings::load_error().is_none();
     Ok(json!({
         "autostart_available": autostart::AVAILABLE,
         "autostart": autostart::enabled(),
         "use_system_proxy_for_control": p.get("use_system_proxy_for_control").and_then(Value::as_bool).unwrap_or(false),
+        "control_url": control_url,
+        "settings_writable": settings_writable,
+        "control_url_editable": super::ALLOW_CUSTOM_CONTROL_URL && super::CONTROL_OVERRIDE.is_none(),
+        "control_url_overridden": super::CONTROL_OVERRIDE.is_some(),
     }))
+}
+
+#[tauri::command]
+pub fn shell_set_control_url(webview: Webview, url: Option<String>) -> Result<(), String> {
+    local_only(&webview)?;
+    if let Some(error) = control_url_edit_error(
+        super::ALLOW_CUSTOM_CONTROL_URL,
+        super::CONTROL_OVERRIDE.is_some(),
+    ) {
+        return Err(error.into());
+    }
+    let normalized_url = crate::settings::normalize_control_url(url.as_deref())?;
+    let mut settings = crate::settings::load().map_err(|_| "settings_load_failed".to_string())?;
+    if crate::settings::load_error().is_some() {
+        return Err("settings_unreadable".into());
+    }
+    settings.control_url = normalized_url;
+    crate::settings::save(&settings).map_err(|_| "settings_save_failed".to_string())
+}
+
+fn effective_preferences_control_url(
+    build_override: Option<&str>,
+    saved_control_url: Option<&str>,
+) -> Option<String> {
+    if let Some(raw) = build_override {
+        return super::parse_control_override(raw).map(|url| url.origin().ascii_serialization());
+    }
+    crate::settings::normalize_control_url(saved_control_url)
+        .ok()
+        .flatten()
+}
+
+fn control_url_edit_error(allow_custom_url: bool, overridden: bool) -> Option<&'static str> {
+    if overridden {
+        Some("control_url_overridden")
+    } else if !allow_custom_url {
+        Some("control_url_locked_in_release")
+    } else {
+        None
+    }
 }
 
 #[tauri::command]
@@ -425,10 +475,46 @@ mod tests {
                 "{c} missing from build.rs"
             );
         }
+        let capability = include_str!("../../capabilities/default.json");
+        assert!(capability.contains("allow-shell-set-control-url"));
+        assert!(build.contains("\"shell_set_control_url\""));
     }
 
     #[test]
     fn hub_commands_are_all_desktop_ones() {
         assert!(HUB_COMMANDS.iter().all(|c| c.starts_with("desktop_")));
+    }
+
+    #[test]
+    fn control_url_editing_is_locked_for_releases_or_build_overrides() {
+        assert_eq!(
+            control_url_edit_error(false, false),
+            Some("control_url_locked_in_release")
+        );
+        assert_eq!(
+            control_url_edit_error(false, true),
+            Some("control_url_overridden")
+        );
+        assert_eq!(
+            control_url_edit_error(true, true),
+            Some("control_url_overridden")
+        );
+        assert_eq!(control_url_edit_error(true, false), None);
+    }
+
+    #[test]
+    fn preferences_control_url_prefers_build_override_over_saved_setting() {
+        assert_eq!(
+            effective_preferences_control_url(
+                Some("http://127.0.0.1:18080/"),
+                Some("https://saved.example/"),
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:18080")
+        );
+        assert_eq!(
+            effective_preferences_control_url(None, Some("https://saved.example/")).as_deref(),
+            Some("https://saved.example")
+        );
     }
 }
