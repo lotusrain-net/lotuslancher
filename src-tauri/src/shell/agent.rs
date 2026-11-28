@@ -55,15 +55,20 @@ pub fn spawn() -> Result<()> {
     }
     let me = std::env::current_exe()?;
     let mut cmd = Command::new(&agent);
-    cmd.arg("--embedded")
-        .arg("--driver-path")
-        .arg(&me)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(control) = super::CONTROL_OVERRIDE {
+    cmd.arg("--embedded").arg("--driver-path").arg(&me);
+    let settings_override = crate::settings::load()
+        .ok()
+        .and_then(|settings| settings.control_url);
+    if let Some(control) = resolve_agent_control_arg(
+        super::CONTROL_OVERRIDE,
+        settings_override.as_deref(),
+        super::ALLOW_CUSTOM_CONTROL_URL,
+    ) {
         cmd.arg("--control-url").arg(control);
     }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -75,6 +80,22 @@ pub fn spawn() -> Result<()> {
             .with_context(|| format!("starting {}", agent.display()))?,
     );
     Ok(())
+}
+
+fn resolve_agent_control_arg(
+    build_override: Option<&str>,
+    settings_override: Option<&str>,
+    allow_custom_setting: bool,
+) -> Option<String> {
+    if let Some(raw) = build_override {
+        return super::parse_control_override(raw).map(|url| url.origin().ascii_serialization());
+    }
+    if !allow_custom_setting {
+        return None;
+    }
+    crate::settings::normalize_control_url(settings_override)
+        .ok()
+        .flatten()
 }
 
 /// The child has exited (or none was started by this shell).
@@ -233,5 +254,50 @@ mod tests {
         assert_eq!(sanitize_code("C:\\Users\\x\\secret"), "operation_failed");
         assert_eq!(sanitize_code("bad code"), "operation_failed");
         assert_eq!(sanitize_code(""), "operation_failed");
+    }
+
+    #[test]
+    fn build_override_is_normalized_and_wins_over_settings() {
+        assert_eq!(
+            resolve_agent_control_arg(
+                Some("http://localhost:3000/"),
+                Some("https://settings.example/"),
+                true,
+            )
+            .as_deref(),
+            Some("http://localhost:3000")
+        );
+    }
+
+    #[test]
+    fn invalid_build_override_fails_closed_without_settings_fallback() {
+        assert_eq!(
+            resolve_agent_control_arg(
+                Some("http://remote.example"),
+                Some("https://settings.example"),
+                true,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn custom_settings_are_opt_in_validated_and_normalized() {
+        assert_eq!(
+            resolve_agent_control_arg(None, Some("http://127.0.0.1:8080/"), true).as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        assert_eq!(
+            resolve_agent_control_arg(None, Some("https://settings.example/"), false),
+            None
+        );
+        assert_eq!(
+            resolve_agent_control_arg(None, Some("http://remote.example"), true),
+            None
+        );
+        assert_eq!(
+            resolve_agent_control_arg(None, Some("https://bad.example/path"), true),
+            None
+        );
     }
 }

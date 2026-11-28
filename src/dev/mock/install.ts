@@ -54,6 +54,7 @@ function install(): void {
   const log: { cmd: string; args: Record<string, unknown> }[] = [];
   const callbacks = new Map<number, { cb: Callback; once: boolean }>();
   const listeners = new Map<string, Set<number>>();
+  let shellControlUrl: string | null = null;
 
   const emit = (event: string, payload?: unknown) => {
     const ids = listeners.get(event);
@@ -74,6 +75,46 @@ function install(): void {
   bindSync(() => state, emit, () => saveState(state));
 
   const events: Record<string, (args: any) => unknown> = {
+    "shell_snapshot": () => ({
+      screen: "daily", drawer: true,
+      status: { state: "ready", connection: "online", transport: "connected", last_presence_at: new Date().toISOString() },
+      agent_health: "healthy", engine_ready: true, engine_installing: false, engine_error: null,
+      engine_update: "current", engine_installed_version: "158.0.8127.36", engine_required_version: null,
+      min_launcher_version: null, engine_update_error: null, shell_version: "2.1.17", autostart_available: true,
+    }),
+    "shell_preferences": () => {
+      const query = new URLSearchParams(location.search);
+      const overridden = query.get("control_overridden") === "1";
+      return {
+        autostart: true, autostart_available: true, use_system_proxy_for_control: false,
+        control_url: overridden ? "http://127.0.0.1:18080" : shellControlUrl, settings_writable: true,
+        control_url_editable: query.get("control_editable") !== "0" && !overridden,
+        control_url_overridden: overridden,
+      };
+    },
+    "shell_set_control_url": ({ url }) => {
+      const query = new URLSearchParams(location.search);
+      if (query.get("control_editable") === "0") throw "control_url_locked_in_release";
+      if (query.get("control_overridden") === "1") throw "control_url_overridden";
+      if (typeof url !== "string") {
+        shellControlUrl = null;
+        return null;
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(url.trim());
+      } catch {
+        throw "invalid_control_url";
+      }
+      const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+      if (!(parsed.protocol === "https:" || parsed.protocol === "http:" && loopback)
+        || parsed.username !== "" || parsed.password !== "" || parsed.pathname !== "/"
+        || parsed.search !== "" || parsed.hash !== "") {
+        throw "invalid_control_url";
+      }
+      shellControlUrl = parsed.origin;
+      return null;
+    },
     "plugin:event|listen": ({ event, handler }) => {
       if (!listeners.has(event)) listeners.set(event, new Set());
       listeners.get(event)!.add(Number(handler));
