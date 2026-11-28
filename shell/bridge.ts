@@ -50,6 +50,8 @@ export type Prefs = {
   autostart: boolean;
   autostart_available: boolean;
   use_system_proxy_for_control: boolean;
+  control_url: string | null;
+  settings_writable: boolean;
 };
 
 export type Progress = {
@@ -60,9 +62,14 @@ export type Progress = {
 } | null;
 
 const HAS_BRIDGE = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+let devControlUrl: string | null = null;
 
 /** Dev server in a plain browser only: `?screen=daily&drawer=1` draws that state. */
-function devMock<T>(cmd: string): Promise<T> {
+function devMock<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (cmd === "shell_set_control_url") {
+    devControlUrl = typeof args?.url === "string" ? args.url : null;
+    return Promise.resolve(null as T);
+  }
   const q = new URLSearchParams(location.search);
   const starting = q.get("screen") === "starting";
   const agentHealth = q.get("health") === "healthy" || !starting ? "healthy" : "checking";
@@ -82,12 +89,18 @@ function devMock<T>(cmd: string): Promise<T> {
     shell_version: "1.2.11",
     autostart_available: true,
   };
-  const prefs: Prefs = { autostart: true, autostart_available: true, use_system_proxy_for_control: false };
+  const prefs: Prefs = {
+    autostart: true,
+    autostart_available: true,
+    use_system_proxy_for_control: false,
+    control_url: devControlUrl,
+    settings_writable: true,
+  };
   return Promise.resolve((cmd === "shell_snapshot" ? snap : cmd === "shell_preferences" ? prefs : null) as T);
 }
 
 export function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!HAS_BRIDGE && import.meta.env.DEV) return devMock<T>(cmd);
+  if (!HAS_BRIDGE && import.meta.env.DEV) return devMock<T>(cmd, args);
   if (!HAS_BRIDGE) return Promise.reject("desktop_bridge_unavailable");
   return tauriInvoke<T>(cmd, args);
 }
@@ -113,6 +126,10 @@ const MESSAGES: Record<string, string> = {
   agent_unreachable: "本机服务未响应，请稍后再试",
   agent_not_running: "本机服务未运行，请重启客户端",
   autostart_unavailable: "当前系统不支持开机自动启动",
+  invalid_control_url: "请输入 HTTPS 地址，或本机回环 HTTP 地址",
+  settings_unreadable: "桌面端设置文件无法读取，请先修复后重试",
+  settings_load_failed: "桌面端设置读取失败",
+  settings_save_failed: "桌面端设置保存失败",
   support_export_failed: "诊断日志包导出失败",
   action_not_allowed: "不支持的操作",
 };

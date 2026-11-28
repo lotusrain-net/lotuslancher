@@ -3265,6 +3265,7 @@ pub fn run() {
             shell::shell_action,
             shell::shell_cleanup,
             shell::shell_preferences,
+            shell::shell_set_control_url,
             shell::shell_set_autostart,
             shell::shell_set_system_proxy,
             shell::shell_summary,

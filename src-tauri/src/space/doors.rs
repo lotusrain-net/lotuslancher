@@ -389,6 +389,7 @@ const RULES: &[(&str, Need)] = &[
     ("shell::shell_action", Machine),
     ("shell::shell_cleanup", Machine),
     ("shell::shell_preferences", Machine),
+    ("shell::shell_set_control_url", Machine),
     ("shell::shell_set_autostart", Machine),
     ("shell::shell_set_system_proxy", Machine),
     ("shell::shell_summary", Machine),

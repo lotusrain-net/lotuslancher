@@ -16,6 +16,7 @@
     "allow-shell-action",
     "allow-shell-cleanup",
     "allow-shell-preferences",
+    "allow-shell-set-control-url",
     "allow-shell-set-autostart",
     "allow-shell-set-system-proxy",
     "allow-shell-summary",

@@ -459,6 +459,12 @@
           "markdownDescription": "Enables the shell_set_autostart command without any pre-configured scope."
         },
         {
+          "description": "Enables the shell_set_control_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-set-control-url",
+          "markdownDescription": "Enables the shell_set_control_url command without any pre-configured scope."
+        },
+        {
           "description": "Enables the shell_set_drawer command without any pre-configured scope.",
           "type": "string",
           "const": "allow-shell-set-drawer",
@@ -601,6 +607,12 @@
           "type": "string",
           "const": "deny-shell-set-autostart",
           "markdownDescription": "Denies the shell_set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_set_control_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-set-control-url",
+          "markdownDescription": "Denies the shell_set_control_url command without any pre-configured scope."
         },
         {
           "description": "Denies the shell_set_drawer command without any pre-configured scope.",

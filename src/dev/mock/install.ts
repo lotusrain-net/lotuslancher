@@ -54,6 +54,7 @@ function install(): void {
   const log: { cmd: string; args: Record<string, unknown> }[] = [];
   const callbacks = new Map<number, { cb: Callback; once: boolean }>();
   const listeners = new Map<string, Set<number>>();
+  let shellControlUrl: string | null = null;
 
   const emit = (event: string, payload?: unknown) => {
     const ids = listeners.get(event);
@@ -74,6 +75,21 @@ function install(): void {
   bindSync(() => state, emit, () => saveState(state));
 
   const events: Record<string, (args: any) => unknown> = {
+    "shell_snapshot": () => ({
+      screen: "daily", drawer: true,
+      status: { state: "ready", connection: "online", transport: "connected", last_presence_at: new Date().toISOString() },
+      agent_health: "healthy", engine_ready: true, engine_installing: false, engine_error: null,
+      engine_update: "current", engine_installed_version: "158.0.8127.36", engine_required_version: null,
+      min_launcher_version: null, engine_update_error: null, shell_version: "2.1.20", autostart_available: true,
+    }),
+    "shell_preferences": () => ({
+      autostart: true, autostart_available: true, use_system_proxy_for_control: false,
+      control_url: shellControlUrl, settings_writable: true,
+    }),
+    "shell_set_control_url": ({ url }) => {
+      shellControlUrl = typeof url === "string" ? url : null;
+      return null;
+    },
     "plugin:event|listen": ({ event, handler }) => {
       if (!listeners.has(event)) listeners.set(event, new Set());
       listeners.get(event)!.add(Number(handler));

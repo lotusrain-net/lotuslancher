@@ -296,11 +296,30 @@ pub async fn shell_preferences(webview: Webview) -> Result<Value, String> {
     let p = agent::call("GET", "/desktop/preferences", None, SHORT)
         .await
         .unwrap_or(Value::Null);
+    let settings = crate::settings::load().ok();
+    let control_url = settings.as_ref().and_then(|s| s.control_url.clone());
+    let settings_writable = settings.is_some() && crate::settings::load_error().is_none();
     Ok(json!({
         "autostart_available": autostart::AVAILABLE,
         "autostart": autostart::enabled(),
         "use_system_proxy_for_control": p.get("use_system_proxy_for_control").and_then(Value::as_bool).unwrap_or(false),
+        "control_url": control_url,
+        "settings_writable": settings_writable,
     }))
+}
+
+#[tauri::command]
+pub fn shell_set_control_url(webview: Webview, url: Option<String>) -> Result<(), String> {
+    local_only(&webview)?;
+    crate::settings::validate_control_url(url.as_deref())?;
+    if crate::settings::load_error().is_some() {
+        return Err("settings_unreadable".into());
+    }
+    let mut settings = crate::settings::load().map_err(|_| "settings_load_failed".to_string())?;
+    settings.control_url = url
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    crate::settings::save(&settings).map_err(|_| "settings_save_failed".to_string())
 }
 
 #[tauri::command]
@@ -425,6 +444,9 @@ mod tests {
                 "{c} missing from build.rs"
             );
         }
+        let capability = include_str!("../../capabilities/default.json");
+        assert!(capability.contains("allow-shell-set-control-url"));
+        assert!(build.contains("\"shell_set_control_url\""));
     }
 
     #[test]

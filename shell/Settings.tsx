@@ -1,9 +1,23 @@
-import { AlertModal, Button, Card, Switch, Toast, cn } from "@proxyshard/shardx-ui-kit";
+import { AlertModal, Button, Card, Input, Switch, Toast, cn } from "@proxyshard/shardx-ui-kit";
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { act, invoke, presenceTime, problem, say, sessionLabel, statusLabel, transientFailure, type Prefs, type Snapshot } from "./bridge";
 import { CloseGlyph } from "./glyphs";
 
 type Note = { status: "success" | "error"; text: string } | null;
+const DEFAULT_CONTROL_URL = "https://hub.lotusrain.net";
+
+function validControlOrigin(raw: string): boolean {
+  if (raw.trim() === "") return true;
+  try {
+    const url = new URL(raw.trim());
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]";
+    return (url.protocol === "https:" || url.protocol === "http:" && loopback)
+      && url.username === "" && url.password === "" && url.pathname === "/"
+      && url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
 
 function copy(text: string) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -42,17 +56,28 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 /// The settings: status and repair, two preferences, logs, temporary data,
 /// version and uninstall. Drawn in the drawer view and beside the
 /// full-window pages; `onClose` closes whichever holds it.
-export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; onClose: () => void; refresh: () => void }) {
+export function Settings({ snap, onClose, refresh, isOpen }: { snap: Snapshot | null; onClose: () => void; refresh: () => void; isOpen: boolean }) {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<Note>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
+  const [controlUrl, setControlUrl] = useState(DEFAULT_CONTROL_URL);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const prefsLoad = useRef<Promise<void> | null>(null);
 
-  const loadPrefs = useCallback(() => invoke<Prefs>("shell_preferences").then(setPrefs, () => {}), []);
+  const loadPrefs = useCallback(() => {
+    if (prefsLoad.current) return prefsLoad.current;
+    setPrefs(null);
+    const pending = invoke<Prefs>("shell_preferences").then((next) => {
+      setPrefs(next);
+      setControlUrl(next.control_url?.trim() || DEFAULT_CONTROL_URL);
+    }, () => {}).finally(() => { prefsLoad.current = null; });
+    prefsLoad.current = pending;
+    return pending;
+  }, []);
   useEffect(() => {
-    void loadPrefs();
-  }, [loadPrefs, snap?.drawer]);
+    if (isOpen) void loadPrefs();
+  }, [isOpen, loadPrefs]);
 
   const toast = (n: Note) => {
     setNote(n);
@@ -83,6 +108,8 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
     : status?.connection !== "online" || connectedRecently
       ? "实时通道正在重连"
       : "实时通道尚未连接";
+  const controlUrlDirty = (controlUrl.trim() || DEFAULT_CONTROL_URL) !== (prefs?.control_url?.trim() || DEFAULT_CONTROL_URL);
+  const badControlUrl = !validControlOrigin(controlUrl);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -135,7 +162,46 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
           </details>
         </Section>
 
-        <Section title="偏好设置" index={2}>
+        <Section title="服务端连接" index={2}>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="shell-control-url" className="text-body text-text-strong-950">服务端地址</label>
+            <Input
+              id="shell-control-url"
+              aria-label="服务端地址"
+              inputSize="xsmall"
+              className="mono"
+              spellCheck={false}
+              disabled={!prefs || !prefs.settings_writable || busy === "control-url"}
+              value={controlUrl}
+              placeholder={DEFAULT_CONTROL_URL}
+              error={badControlUrl ? "请输入 HTTPS 地址，或本机回环 HTTP 地址。" : undefined}
+              onChange={(event) => setControlUrl(event.target.value)}
+            />
+            <p className="m-0 text-help text-text-soft-400">
+              远程服务使用 HTTPS；本机 Docker 测试可用 <code>http://127.0.0.1:端口</code>。保存后请彻底退出客户端（包括托盘）并重新打开。
+            </p>
+            {!prefs?.settings_writable && prefs && (
+              <p className="m-0 text-help text-error-text">桌面端设置文件无法读取，当前不能修改服务端地址。</p>
+            )}
+            <Button
+              size="xsmall"
+              mode="stroke"
+              variant="neutral"
+              contentAlign="start"
+              disabled={!prefs?.settings_writable || !controlUrlDirty || badControlUrl || busy !== null}
+              isLoading={busy === "control-url"}
+              onClick={() => run(
+                "control-url",
+                () => invoke("shell_set_control_url", { url: controlUrl.trim() || null }).then(loadPrefs),
+                "服务端地址已保存，重启客户端后生效",
+              )}
+            >
+              保存服务端地址
+            </Button>
+          </div>
+        </Section>
+
+        <Section title="偏好设置" index={3}>
           <Row label="开机自动启动" hint={prefs && !prefs.autostart_available ? "开机自动启动仅在 Windows 上可用" : undefined}>
             {(id) => (
             <Switch
@@ -158,7 +224,7 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
           </Row>
         </Section>
 
-        <Section title="日志" index={3}>
+        <Section title="日志" index={4}>
           <div className="flex flex-col gap-2">
             <Button size="xsmall" mode="stroke" variant="neutral" contentAlign="start" isLoading={busy === "collect"} onClick={() => run("collect", () => invoke("shell_action", { name: "collect_logs" }), "诊断日志包已导出")}>
               导出诊断日志包
@@ -172,14 +238,14 @@ export function Settings({ snap, onClose, refresh }: { snap: Snapshot | null; on
           </div>
         </Section>
 
-        <Section title="临时数据" index={4}>
+        <Section title="临时数据" index={5}>
           <Button size="xsmall" mode="stroke" variant="neutral" contentAlign="start" className="w-full" disabled={active} isLoading={busy === "cleanup"} onClick={() => run("cleanup", () => invoke("shell_cleanup"), "临时数据已清理")}>
             清理临时数据
           </Button>
           {active && <p className="mt-2 text-help text-text-soft-400">请先在左侧结束当前会话后再清理</p>}
         </Section>
 
-        <Section title="关于" index={5}>
+        <Section title="关于" index={6}>
           <div className="mb-3 flex items-baseline justify-between">
             <span className="text-body text-text-sub-600">版本</span>
             <span className="text-body tabular-nums text-text-strong-950">{snap?.shell_version ?? "-"}</span>

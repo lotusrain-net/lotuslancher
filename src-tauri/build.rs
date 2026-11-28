@@ -22,6 +22,7 @@ const COMMANDS: &[&str] = &[
     "shell_action",
     "shell_cleanup",
     "shell_preferences",
+    "shell_set_control_url",
     "shell_set_autostart",
     "shell_set_system_proxy",
     "shell_summary",
